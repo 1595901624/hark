@@ -175,7 +175,7 @@ export default function TitleBar({ onNavigate, onToggleSidebar }: TitleBarProps)
               </DropdownSubmenu>
             </DesktopTitleMenu>
             <DesktopTitleMenu menuKey="help" label="帮助" activeMenu={activeTitleMenu} onActiveMenuChange={setActiveTitleMenu} onPointerDown={rememberEditableElement}>
-              {desktopMenuItem("source-code", "源代码", undefined, () => void openUrl("https://github.com/1595901624/trovekit"))}
+              {desktopMenuItem("source-code", "源代码", undefined, () => void openUrl("https://github.com/1595901624/hi-abc"))}
               <DropdownSeparator />
               {desktopMenuItem("about", `关于 ${aboutInfo.name}`, undefined, () => setIsAboutOpen(true))}
             </DesktopTitleMenu>
