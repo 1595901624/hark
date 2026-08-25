@@ -152,7 +152,9 @@ impl PaFile {
             }
 
             if let Some(rest) = trimmed.strip_prefix(".function") {
-                let signature = rest.trim().to_string();
+                // 真实输出中 `{` 位于 .function 行尾，剥离后存纯签名，
+                // 渲染时统一补回单个 `{`
+                let signature = rest.trim().trim_end_matches('{').trim().to_string();
                 let (owner_raw, method_name) = split_signature(&signature);
                 let record_idx = match index.get(&owner_raw) {
                     Some(&idx) => idx,
@@ -295,8 +297,9 @@ mod tests {
         let pa = PaFile::parse(SAMPLE);
         let text = pa.render_record(0).unwrap();
         assert!(text.starts_with(".record Lstd/core/String; {"));
-        // `{` 应位于 .function 行尾，而不是独立成行
+        // `{` 应位于 .function 行尾，且只有一个（签名本身不再带 `{`）
         assert!(text.contains(".function any Lstd/core/String;.toString(...) <static false> {"));
+        assert!(!text.contains("{ {"), "found duplicated brace:\n{text}");
         // 每条指令必须独占一行（缩进行不能丢失换行符）
         assert!(text.contains("\n\tmov v0, v1\n"), "text: {text}");
         assert!(text.contains("\n\treturn\n"));
