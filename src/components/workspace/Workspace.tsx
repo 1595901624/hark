@@ -1,3 +1,14 @@
+/**
+ * 反编译工作台主组件（jadx-gui 风格布局）。
+ *
+ * 布局：顶部标题栏 + 左侧可拖宽的项目树面板 + 右侧多标签代码区。
+ *
+ * 职责：
+ * - 通过原生对话框 / Ctrl+O / 拖拽打开 `.abc` / `.hap` / `.har` 文件；
+ * - 监听标题栏菜单派发的全局事件（打开文件 / 关闭项目 / 反编译器设置）；
+ * - 管理编辑器标签（最多 12 个）并懒加载节点内容；
+ * - 持久化侧栏宽度与 `ark_disasm` 路径配置。
+ */
 import { useCallback, useEffect, useRef, useState } from "react"
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 import { getCurrentWebview } from "@tauri-apps/api/webview"
@@ -10,6 +21,7 @@ import { ProjectTree } from "./ProjectTree"
 import { EditorTabs, type EditorTab } from "./EditorTabs"
 import { CodeView } from "./CodeView"
 
+/** 原生打开对话框的文件类型过滤器。 */
 const FILE_FILTERS = [
   {
     name: "Ark 字节码 / 应用包",
@@ -17,27 +29,58 @@ const FILE_FILTERS = [
   },
 ]
 
+/** 单个标签的完整状态：标签信息 + 异步加载的内容 / 错误。 */
 interface TabEntry {
+  /** 标签基础信息。 */
   tab: EditorTab
+  /** 已加载的内容切片；加载中 / 失败时为空。 */
   content?: NodeContent
+  /** 内容是否正在加载。 */
   loading?: boolean
+  /** 加载失败时的错误信息。 */
   error?: string
 }
 
+/** 同一时刻允许打开的最大标签数，超出时淘汰最早的标签。 */
+const MAX_TABS = 12
+
+/**
+ * 渲染整个工作台界面。
+ *
+ * 无项目时显示拖入提示与「打开文件 / 反编译器设置」入口；
+ * 有项目时左侧渲染项目树，右侧按标签状态（加载中 / 出错 / 有内容）
+ * 渲染对应视图。
+ */
 export function Workspace() {
+  /** 项目树根节点；`null` 表示未打开项目 */
   const [tree, setTree] = useState<TreeNode | null>(null)
+  /** 当前项目名（打开文件的文件名） */
   const [projectName, setProjectName] = useState<string | null>(null)
+  /** 全局忙碌提示（如「正在反编译 …」）；`null` 表示空闲 */
   const [busyMessage, setBusyMessage] = useState<string | null>(null)
+  /** 已打开的标签列表 */
   const [tabs, setTabs] = useState<TabEntry[]>([])
+  /** 激活标签的 key */
   const [activeKey, setActiveKey] = useState<string | undefined>()
+  /** 侧栏宽度（持久化） */
   const [sidebarWidth, setSidebarWidth] = usePersistentState<number>("workspace-sidebar-width", 280)
+  /** 反编译器设置弹窗是否打开 */
   const [toolModalOpen, setToolModalOpen] = useState(false)
+  /** 弹窗中的路径输入草稿 */
   const [toolPathDraft, setToolPathDraft] = useState("")
+  /** 已保存的 `ark_disasm` 路径（持久化） */
   const [toolPath, setToolPath, , toolPathLoaded] = usePersistentState<string>("disassembler-path", "")
+  /** 已加载完成后的工具路径快照，供回调读取最新值 */
   const toolPathRef = useRef("")
   toolPathRef.current = toolPathLoaded ? toolPath : ""
 
-  // ---------- opening ----------
+  // ---------- 打开文件 ----------
+
+  /**
+   * 打开指定路径的文件：调用后端反编译并重建项目树。
+   * 成功后清空所有标签；失败时以 toast 展示错误。
+   * @param path 文件绝对路径
+   */
   const openFile = useCallback(async (path: string) => {
     setBusyMessage(`正在反编译 ${path.split(/[\\/]/).pop()} …`)
     try {
@@ -46,6 +89,7 @@ export function Workspace() {
       setProjectName(t.name)
       setTabs([])
       setActiveKey(undefined)
+      // 同步一次工具路径，便于后端立即校验/缓存
       void api.setDisassemblerPath(toolPathRef.current.trim() || null)
     } catch (e) {
       addToast({ title: "打开失败", description: String(e), severity: "danger" })
@@ -54,6 +98,7 @@ export function Workspace() {
     }
   }, [])
 
+  /** 弹出原生文件选择框并打开选中的文件。 */
   const pickAndOpen = useCallback(async () => {
     const selected = await openFileDialog({
       multiple: false,
@@ -63,9 +108,12 @@ export function Workspace() {
     if (typeof selected === "string") await openFile(selected)
   }, [openFile])
 
-  // ---------- events ----------
+  // ---------- 全局事件 ----------
+
   useEffect(() => {
+    /** 标题栏「文件 → 打开文件…」 */
     const onOpenFile = () => void pickAndOpen()
+    /** 标题栏「文件 → 关闭项目」 */
     const onCloseProject = () => {
       setTree(null)
       setProjectName(null)
@@ -73,6 +121,7 @@ export function Workspace() {
       setActiveKey(undefined)
       void api.closeProject()
     }
+    /** 标题栏「文件 → 反编译器设置…」 */
     const onConfigureTool = () => {
       setToolPathDraft(toolPathRef.current)
       setToolModalOpen(true)
@@ -87,6 +136,7 @@ export function Workspace() {
     }
   }, [pickAndOpen])
 
+  // Ctrl+O / Cmd+O 快捷键打开文件
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") {
@@ -98,7 +148,7 @@ export function Workspace() {
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [pickAndOpen])
 
-  // drag & drop
+  // 拖拽文件进窗口直接打开（仅 Tauri 环境）
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return
     let unlisten: (() => void) | undefined
@@ -113,7 +163,12 @@ export function Workspace() {
     return () => unlisten?.()
   }, [openFile])
 
-  // ---------- tabs ----------
+  // ---------- 标签管理 ----------
+
+  /**
+   * 打开一个节点对应的标签（已存在时仅激活），并异步加载其内容。
+   * @param node 被点击的项目树节点
+   */
   const openNode = useCallback((node: TreeNode) => {
     const key = `node-${node.id}`
     setTabs(prev => {
@@ -123,8 +178,7 @@ export function Workspace() {
         loading: true,
       }
       const next = [...prev, entry]
-      // keep at most 12 tabs
-      return next.length > 12 ? next.slice(next.length - 12) : next
+      return next.length > MAX_TABS ? next.slice(next.length - MAX_TABS) : next
     })
     setActiveKey(key)
 
@@ -146,6 +200,10 @@ export function Workspace() {
     )
   }, [])
 
+  /**
+   * 关闭指定标签；若关闭的是激活标签，则激活相邻的标签。
+   * @param key 要关闭的标签 key
+   */
   const closeTab = (key: string) => {
     setTabs(prev => {
       const idx = prev.findIndex(entry => entry.tab.key === key)
@@ -158,20 +216,25 @@ export function Workspace() {
     })
   }
 
+  /** 当前激活的标签状态。 */
   const activeTab = tabs.find(entry => entry.tab.key === activeKey)
 
-  // ---------- sidebar resize ----------
+  // ---------- 侧栏拖宽 ----------
+
+  /** 开始拖动侧栏分隔条：捕获指针并进入列调整状态。 */
   const startResize = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
     e.currentTarget.setPointerCapture(e.pointerId)
     document.body.style.cursor = "col-resize"
     document.body.style.userSelect = "none"
   }
+  /** 拖动中：将侧栏宽度限制在 200~520px。 */
   const doResize = (e: React.PointerEvent<HTMLDivElement>) => {
     if (document.body.style.cursor !== "col-resize") return
     const width = Math.min(520, Math.max(200, e.clientX))
     setSidebarWidth(width)
   }
+  /** 结束拖动：释放指针并恢复光标 / 文本选择状态。 */
   const endResize = (e: React.PointerEvent<HTMLDivElement>) => {
     if (document.body.style.cursor !== "col-resize") return
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
@@ -186,7 +249,7 @@ export function Workspace() {
       <TitleBar onToggleSidebar={() => undefined} />
 
       <div className="flex min-h-0 flex-1">
-        {/* sidebar */}
+        {/* 左侧项目树面板 */}
         <aside
           className="relative flex shrink-0 flex-col border-r border-default-200/80 bg-chrome"
           style={{ width: sidebarWidth }}
@@ -215,6 +278,7 @@ export function Workspace() {
               </p>
             )}
           </div>
+          {/* 侧栏拖宽分隔条 */}
           <div
             role="separator"
             aria-label="调整宽度"
@@ -226,7 +290,7 @@ export function Workspace() {
           />
         </aside>
 
-        {/* editor area */}
+        {/* 右侧代码区 */}
         <main className="flex min-w-0 flex-1 flex-col rounded-tl-lg border-l border-t border-default-200/60 bg-background">
           {tabs.length > 0 ? (
             <EditorTabs
@@ -296,7 +360,7 @@ export function Workspace() {
         </main>
       </div>
 
-      {/* disassembler settings */}
+      {/* 反编译器设置弹窗 */}
       <Modal isOpen={toolModalOpen} onClose={() => setToolModalOpen(false)}>
         <ModalContent className="max-w-[480px]">
           <ModalHeader>反编译器设置</ModalHeader>
@@ -338,6 +402,12 @@ export function Workspace() {
   )
 }
 
+/**
+ * 居中空状态占位视图（未打开项目 / 加载中 / 出错等场景复用）。
+ * @param props.icon 顶部图标
+ * @param props.text 说明文字
+ * @param props.text.action 可选的操作按钮区域
+ */
 function EmptyState({
   icon,
   text,

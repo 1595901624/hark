@@ -1,19 +1,39 @@
+/**
+ * 编辑器多标签栏。
+ *
+ * 展示已打开的内容标签，支持点击切换、键盘选择（Enter / Space）
+ * 与悬停显示的关闭按钮。标签数量由父组件（Workspace）控制上限。
+ */
 import { X } from "lucide-react"
 import { cn } from "../../lib/utils"
 
+/** 单个编辑器标签的数据。 */
 export interface EditorTab {
+  /** 标签唯一键（`node-<id>` 形式）。 */
   key: string
+  /** 标签标题（节点名）。 */
   title: string
+  /** 对应的项目树节点 ID。 */
   nodeId: number
 }
 
+/** {@linkcode EditorTabs} 的组件属性。 */
 interface EditorTabsProps {
+  /** 当前打开的全部标签。 */
   tabs: EditorTab[]
+  /** 激活标签的 key；未选中任何标签时为 `undefined`。 */
   activeKey?: string
+  /** 点击 / 键盘选中某个标签时触发。 */
   onSelect: (key: string) => void
+  /** 点击标签关闭按钮时触发（不会冒泡为选中）。 */
   onClose: (key: string) => void
 }
 
+/**
+ * 渲染横向标签栏。
+ *
+ * 激活标签使用背景色 + 底部主色条标识；非激活标签悬停时显示关闭按钮。
+ */
 export function EditorTabs({ tabs, activeKey, onSelect, onClose }: EditorTabsProps) {
   return (
     <div className="flex h-[38px] shrink-0 items-stretch overflow-x-auto border-b border-default-200/80 bg-chrome scrollbar-hide">
