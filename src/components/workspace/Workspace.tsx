@@ -17,6 +17,7 @@ import { ChevronsDownUp, ChevronsUpDown } from "lucide-react"
 import TitleBar from "../TitleBar"
 import { Button, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, addToast } from "../ui/base-ui"
 import { usePersistentState } from "../../hooks/usePersistentState"
+import { cn } from "../../lib/utils"
 import { api, type NodeContent, type TreeNode } from "../../lib/api"
 import { ProjectTree, type TreeCommand } from "./ProjectTree"
 import { EditorTabs, type EditorTab } from "./EditorTabs"
@@ -65,6 +66,15 @@ export function Workspace() {
   const [activeKey, setActiveKey] = useState<string | undefined>()
   /** 侧栏宽度（持久化） */
   const [sidebarWidth, setSidebarWidth] = usePersistentState<number>("workspace-sidebar-width", 280)
+  /** 侧栏是否收起（持久化，由标题栏左上角按钮切换） */
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = usePersistentState<boolean>(
+    "workspace-sidebar-collapsed",
+    false,
+  )
+  /** 是否正在拖拽调整侧栏宽度（拖拽期间禁用宽度过渡动画） */
+  const [isResizing, setIsResizing] = useState(false)
+  /** 切换侧栏收起/展开状态 */
+  const toggleSidebar = () => setIsSidebarCollapsed(collapsed => !collapsed)
   /** 反编译器设置弹窗是否打开 */
   const [toolModalOpen, setToolModalOpen] = useState(false)
   /** 弹窗中的路径输入草稿 */
@@ -232,38 +242,43 @@ export function Workspace() {
 
   // ---------- 侧栏拖宽 ----------
 
-  /** 开始拖动侧栏分隔条：捕获指针并进入列调整状态。 */
+  /** 开始拖动侧栏分隔条：捕获指针并进入列调整状态（禁用过渡动画）。 */
   const startResize = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
     e.currentTarget.setPointerCapture(e.pointerId)
     document.body.style.cursor = "col-resize"
     document.body.style.userSelect = "none"
+    setIsResizing(true)
   }
   /** 拖动中：将侧栏宽度限制在 200~520px。 */
   const doResize = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (document.body.style.cursor !== "col-resize") return
+    if (!isResizing) return
     const width = Math.min(520, Math.max(200, e.clientX))
     setSidebarWidth(width)
   }
   /** 结束拖动：释放指针并恢复光标 / 文本选择状态。 */
   const endResize = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (document.body.style.cursor !== "col-resize") return
+    if (!isResizing) return
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId)
     }
     document.body.style.cursor = ""
     document.body.style.userSelect = ""
+    setIsResizing(false)
   }
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-chrome text-foreground">
-      <TitleBar onToggleSidebar={() => undefined} />
+      <TitleBar onToggleSidebar={toggleSidebar} />
 
       <div className="flex min-h-0 flex-1">
         {/* 左侧项目树面板 */}
         <aside
-          className="relative flex shrink-0 flex-col border-r border-default-200/80 bg-chrome"
-          style={{ width: sidebarWidth }}
+          className={cn(
+            "relative flex shrink-0 flex-col overflow-hidden border-r border-default-200/80 bg-chrome",
+            !isResizing && "transition-[width] duration-200",
+          )}
+          style={{ width: isSidebarCollapsed ? 0 : sidebarWidth }}
         >
           <div className="flex h-9 shrink-0 items-center justify-between border-b border-default-200/70 px-3">
             <span className="text-[12px] font-medium tracking-wide text-default-500">项目</span>
@@ -322,16 +337,18 @@ export function Workspace() {
               </p>
             )}
           </div>
-          {/* 侧栏拖宽分隔条 */}
-          <div
-            role="separator"
-            aria-label="调整宽度"
-            className="absolute inset-y-0 right-0 z-20 w-1.5 cursor-col-resize touch-none"
-            onPointerDown={startResize}
-            onPointerMove={doResize}
-            onPointerUp={endResize}
-            onPointerCancel={endResize}
-          />
+          {/* 侧栏拖宽分隔条（收起时隐藏） */}
+          {!isSidebarCollapsed && (
+            <div
+              role="separator"
+              aria-label="调整宽度"
+              className="absolute inset-y-0 right-0 z-20 w-1.5 cursor-col-resize touch-none"
+              onPointerDown={startResize}
+              onPointerMove={doResize}
+              onPointerUp={endResize}
+              onPointerCancel={endResize}
+            />
+          )}
         </aside>
 
         {/* 右侧代码区 */}
