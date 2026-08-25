@@ -394,22 +394,39 @@ struct PackageNode {
     records: Vec<usize>,
 }
 
-/// 将一个 record 按展示名的 `.` 分段插入包层级。
+/// 将 record 展示名拆分为（包路径段, 类短名）。
+///
+/// 名称末尾可能带版本号后缀（如 `&cmcc.ssosdk.d&1.0.9` 中的 `&1.0.9`），
+/// 以最后一个 `&` 为界：后缀整体并入类短名，不参与 `.` 分段。
+///
+/// - `&cmcc.ssosdk.d&1.0.9` -> (`[&cmcc, ssosdk]`, `d&1.0.9`)
+/// - `com.example.Foo`      -> (`[com, example]`, `Foo`)
+/// - `Foo` / `<global>`     -> (`[]`, 原名)
+fn split_record_name(display_name: &str) -> (Vec<&str>, String) {
+    let (body, version) = match display_name.rfind('&') {
+        Some(pos) => (&display_name[..pos], &display_name[pos..]),
+        None => (display_name, ""),
+    };
+    let mut segments: Vec<&str> = body.split('.').filter(|s| !s.is_empty()).collect();
+    match segments.pop() {
+        Some(last) if !segments.is_empty() => (segments, format!("{last}{version}")),
+        // 单段名（可能整体带版本后缀）直接作为根级类
+        _ => (Vec::new(), display_name.to_string()),
+    }
+}
+
+/// 将一个 record 按展示名插入包层级（版本号后缀不参与分段）。
 ///
 /// 单段名、空名、以 `<` 开头（如 `<global>`）或含空格的名称
 /// 直接挂在根上，不参与包分组。
 fn insert_record(root: &mut PackageNode, display_name: &str, record_idx: usize) {
-    let segments: Vec<&str> = display_name.split('.').collect();
-    if segments.len() <= 1
-        || display_name.is_empty()
-        || display_name.starts_with('<')
-        || display_name.contains(' ')
-    {
+    let (parents, leaf) = split_record_name(display_name);
+    if parents.is_empty() || leaf.starts_with('<') || display_name.contains(' ') {
         root.records.push(record_idx);
         return;
     }
     let mut node = root;
-    for seg in &segments[..segments.len() - 1] {
+    for seg in &parents {
         node = node.children.entry((*seg).to_string()).or_default();
     }
     node.records.push(record_idx);
@@ -449,14 +466,9 @@ fn flatten_packages(
         // 先克隆所需数据，避免同时持有 project 的可变/不可变借用
         let (short, method_names) = {
             let rec: &PaRecord = &project.units[unit].pa.records[*ri];
-            let short = rec
-                .display_name
-                .rsplit('.')
-                .next()
-                .unwrap_or(&rec.display_name)
-                .to_string();
+            let (_, leaf) = split_record_name(&rec.display_name);
             let names = rec.methods.iter().map(|m| m.name.clone()).collect::<Vec<_>>();
-            (short, names)
+            (leaf, names)
         };
         let id = project.alloc_id();
         let mut tn = TreeNode {
@@ -515,4 +527,30 @@ pub struct NodeContent {
     pub language: String,
     /// 正文文本。
     pub body: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 版本号后缀（最后一个 `&` 起）必须整体并入类短名，不参与 `.` 分段。
+    #[test]
+    fn splits_record_name_with_version_suffix() {
+        let (parents, leaf) = split_record_name("&cmcc.ssosdk.d&1.0.9");
+        assert_eq!(parents, vec!["&cmcc", "ssosdk"]);
+        assert_eq!(leaf, "d&1.0.9");
+
+        let (parents, leaf) = split_record_name("com.example.Foo");
+        assert_eq!(parents, vec!["com", "example"]);
+        assert_eq!(leaf, "Foo");
+
+        // 单段名（即使带版本后缀）直接作为根级类
+        let (parents, leaf) = split_record_name("&cmcc&1.0.9");
+        assert!(parents.is_empty());
+        assert_eq!(leaf, "&cmcc&1.0.9");
+
+        let (parents, leaf) = split_record_name("Foo");
+        assert!(parents.is_empty());
+        assert_eq!(leaf, "Foo");
+    }
 }
