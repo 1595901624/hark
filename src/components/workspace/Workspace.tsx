@@ -13,11 +13,12 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 import { getCurrentWebview } from "@tauri-apps/api/webview"
 import { FileCode2, FolderOpen, LoaderCircle, Settings2 } from "lucide-react"
+import { ChevronsDownUp, ChevronsUpDown } from "lucide-react"
 import TitleBar from "../TitleBar"
 import { Button, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, addToast } from "../ui/base-ui"
 import { usePersistentState } from "../../hooks/usePersistentState"
 import { api, type NodeContent, type TreeNode } from "../../lib/api"
-import { ProjectTree } from "./ProjectTree"
+import { ProjectTree, type TreeCommand } from "./ProjectTree"
 import { EditorTabs, type EditorTab } from "./EditorTabs"
 import { CodeView } from "./CodeView"
 
@@ -73,6 +74,16 @@ export function Workspace() {
   /** 已加载完成后的工具路径快照，供回调读取最新值 */
   const toolPathRef = useRef("")
   toolPathRef.current = toolPathLoaded ? toolPath : ""
+  /** 下发给项目树的展开/折叠指令（携带递增 seq 保证重复指令生效） */
+  const [treeCommand, setTreeCommand] = useState<TreeCommand | null>(null)
+  const treeCommandSeq = useRef(0)
+
+  /** 全部展开项目树。 */
+  const expandAll = () =>
+    setTreeCommand({ type: "expand-all", seq: ++treeCommandSeq.current })
+  /** 全部折叠项目树（仅保留根节点展开）。 */
+  const collapseAll = () =>
+    setTreeCommand({ type: "collapse-all", seq: ++treeCommandSeq.current })
 
   // ---------- 打开文件 ----------
 
@@ -256,20 +267,53 @@ export function Workspace() {
         >
           <div className="flex h-9 shrink-0 items-center justify-between border-b border-default-200/70 px-3">
             <span className="text-[12px] font-medium tracking-wide text-default-500">项目</span>
-            <Button
-              isIconOnly
-              size="sm"
-              variant="light"
-              aria-label="打开文件"
-              onPress={() => void pickAndOpen()}
-              className="h-6 w-6 min-w-6 rounded-md text-default-500 hover:bg-black/[0.05] dark:hover:bg-white/[0.07]"
-            >
-              <FolderOpen className="h-3.5 w-3.5" />
-            </Button>
+            <div className="flex items-center gap-0.5">
+              {tree && (
+                <>
+                  <Button
+                    isIconOnly
+                    size="sm"
+                    variant="light"
+                    aria-label="全部展开"
+                    title="全部展开"
+                    onPress={expandAll}
+                    className="h-6 w-6 min-w-6 rounded-md text-default-500 hover:bg-black/[0.05] dark:hover:bg-white/[0.07]"
+                  >
+                    <ChevronsUpDown className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    isIconOnly
+                    size="sm"
+                    variant="light"
+                    aria-label="全部折叠"
+                    title="全部折叠"
+                    onPress={collapseAll}
+                    className="h-6 w-6 min-w-6 rounded-md text-default-500 hover:bg-black/[0.05] dark:hover:bg-white/[0.07]"
+                  >
+                    <ChevronsDownUp className="h-3.5 w-3.5" />
+                  </Button>
+                </>
+              )}
+              <Button
+                isIconOnly
+                size="sm"
+                variant="light"
+                aria-label="打开文件"
+                onPress={() => void pickAndOpen()}
+                className="h-6 w-6 min-w-6 rounded-md text-default-500 hover:bg-black/[0.05] dark:hover:bg-white/[0.07]"
+              >
+                <FolderOpen className="h-3.5 w-3.5" />
+              </Button>
+            </div>
           </div>
           <div className="min-h-0 flex-1 overflow-auto py-2 scrollbar-thin">
             {tree ? (
-              <ProjectTree tree={tree} activeNodeId={activeTab?.tab.nodeId} onOpenNode={openNode} />
+              <ProjectTree
+                tree={tree}
+                activeNodeId={activeTab?.tab.nodeId}
+                onOpenNode={openNode}
+                command={treeCommand}
+              />
             ) : (
               <p className="px-4 py-8 text-center text-[12.5px] leading-relaxed text-default-400">
                 尚未打开项目

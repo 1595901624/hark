@@ -5,7 +5,7 @@
  * 类 -> 方法。目录/包节点点击展开折叠；类、方法、`.abc` 单元节点
  * 点击时同时触发 {@linkcode ProjectTreeProps.onOpenNode} 打开内容标签。
  */
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   ChevronDown,
   ChevronRight,
@@ -19,6 +19,12 @@ import {
 import { cn } from "../../lib/utils"
 import type { NodeKind, TreeNode } from "../../lib/api"
 
+/** 树展开/折叠指令：`seq` 递增以触发重复执行同类型指令。 */
+export interface TreeCommand {
+  type: "expand-all" | "collapse-all"
+  seq: number
+}
+
 /** {@linkcode ProjectTree} 的组件属性。 */
 interface ProjectTreeProps {
   /** 项目树根节点。 */
@@ -27,20 +33,41 @@ interface ProjectTreeProps {
   activeNodeId?: number
   /** 用户点击可打开节点（类 / 方法 / `.abc` 单元）时触发。 */
   onOpenNode: (node: TreeNode) => void
+  /** 外部下发的展开/折叠指令（全部展开 / 全部折叠）。 */
+  command?: TreeCommand | null
 }
 
 /**
  * 渲染整棵项目树。
  *
- * 初始展开根节点与其下的 `.abc` 单元；展开状态在组件内部维护。
+ * 初始展开根节点与其下的 `.abc` 单元；展开状态在组件内部维护，
+ * 可通过 `command` 属性从外部统一下发展开/折叠。
  */
-export function ProjectTree({ tree, activeNodeId, onOpenNode }: ProjectTreeProps) {
-  /** 处于展开状态的节点 ID 集合 */
+export function ProjectTree({ tree, activeNodeId, onOpenNode, command }: ProjectTreeProps) {
+  // auto-expand root and its abc children
   const [expanded, setExpanded] = useState<Set<number>>(() => {
     const initial = new Set<number>([tree.id])
     tree.children.forEach(child => child.kind === "abc" && initial.add(child.id))
     return initial
   })
+
+  // 响应外部「全部展开 / 全部折叠」指令
+  useEffect(() => {
+    if (!command) return
+    if (command.type === "collapse-all") {
+      setExpanded(new Set([tree.id]))
+      return
+    }
+    const ids = new Set<number>()
+    const walk = (node: TreeNode) => {
+      if (node.children.length > 0) {
+        ids.add(node.id)
+        node.children.forEach(walk)
+      }
+    }
+    walk(tree)
+    setExpanded(ids)
+  }, [command, tree])
 
   /** 切换某节点的展开/折叠状态。 */
   const toggle = (id: number) => {
