@@ -1,0 +1,49 @@
+import { ChevronDown, Moon, Sun, Monitor } from "lucide-react"
+import { useTheme } from "./theme-provider"
+import { Button, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "./ui/base-ui"
+
+interface ThemeToggleProps {
+  className?: string
+  variant?: string
+  radius?: string
+  showLabel?: boolean
+  compact?: boolean
+}
+
+export function ThemeToggle({ className, variant = "light", radius, showLabel = false, compact = false }: ThemeToggleProps = {}) {
+  const { setTheme, theme } = useTheme()
+
+  return (
+    <Dropdown>
+      <DropdownTrigger>
+        <Button
+          isIconOnly={!showLabel}
+          variant={variant}
+          radius={radius ?? (showLabel ? "md" : "full")}
+          className={className}
+          aria-label="主题"
+          startContent={showLabel ? (theme === "light" ? <Sun className="h-4 w-4" /> : theme === "dark" ? <Moon className="h-4 w-4" /> : <Monitor className="h-4 w-4" />) : undefined}
+          endContent={showLabel ? <ChevronDown className="h-3.5 w-3.5 text-default-400" /> : undefined}
+        >
+          {showLabel ? (theme === "light" ? "浅色" : theme === "dark" ? "深色" : "跟随系统") : (
+            <>
+              <Sun className={`${compact ? "h-3 w-3" : "h-3.5 w-3.5"} rotate-0 scale-100 text-default-500 transition-all dark:-rotate-90 dark:scale-0`} />
+              <Moon className={`absolute ${compact ? "h-3 w-3" : "h-3.5 w-3.5"} rotate-90 scale-0 text-default-500 transition-all dark:rotate-0 dark:scale-100`} />
+            </>
+          )}
+        </Button>
+      </DropdownTrigger>
+      <DropdownMenu aria-label="Theme selection" selectionMode="single" selectedKeys={new Set([theme])}>
+        <DropdownItem key="light" startContent={<Sun className="w-4 h-4" />} onClick={() => setTheme("light")}>
+          浅色
+        </DropdownItem>
+        <DropdownItem key="dark" startContent={<Moon className="w-4 h-4" />} onClick={() => setTheme("dark")}>
+          深色
+        </DropdownItem>
+        <DropdownItem key="system" startContent={<Monitor className="w-4 h-4" />} onClick={() => setTheme("system")}>
+          跟随系统
+        </DropdownItem>
+      </DropdownMenu>
+    </Dropdown>
+  )
+}
