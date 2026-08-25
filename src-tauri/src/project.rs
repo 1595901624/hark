@@ -328,9 +328,16 @@ impl Project {
                 let mut body = String::new();
                 // 真实格式中 `{` 位于 .function 行尾
                 body.push_str(&format!(".function {} {{\n", m.signature));
+                // 指令统一重排缩进（源文件中为单 tab）
                 for line in &m.body {
-                    body.push_str(line);
-                    body.push('\n');
+                    let trimmed = line.trim_start();
+                    if trimmed.is_empty() {
+                        body.push('\n');
+                    } else {
+                        body.push_str("    ");
+                        body.push_str(trimmed);
+                        body.push('\n');
+                    }
                 }
                 body.push_str("}\n");
                 Ok(NodeContent {

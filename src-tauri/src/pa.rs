@@ -219,9 +219,14 @@ impl PaFile {
             out.push('\n');
             // 真实格式中 `{` 位于 .function 行尾
             out.push_str(&format!("    .function {} {{\n", m.signature));
+            // 指令统一重排缩进（源文件中为单 tab，这里对齐到 .function 内部）
             for line in &m.body {
-                out.push_str(line);
-                out.push('\n');
+                let trimmed = line.trim_start();
+                if trimmed.is_empty() {
+                    out.push('\n');
+                } else {
+                    out.push_str(&format!("        {trimmed}\n"));
+                }
             }
             out.push_str("    }\n");
         }
@@ -300,9 +305,9 @@ mod tests {
         // `{` 应位于 .function 行尾，且只有一个（签名本身不再带 `{`）
         assert!(text.contains(".function any Lstd/core/String;.toString(...) <static false> {"));
         assert!(!text.contains("{ {"), "found duplicated brace:\n{text}");
-        // 每条指令必须独占一行（缩进行不能丢失换行符）
-        assert!(text.contains("\n\tmov v0, v1\n"), "text: {text}");
-        assert!(text.contains("\n\treturn\n"));
+        // 每条指令必须独占一行，且缩进重排为 8 空格（对齐到 .function 内部）
+        assert!(text.contains("\n        mov v0, v1\n"), "text: {text}");
+        assert!(text.contains("\n        return\n"));
         assert!(text.trim_end().ends_with('}'));
     }
 }
