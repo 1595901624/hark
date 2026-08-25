@@ -67,7 +67,7 @@ export function ProjectTree({ tree, activeNodeId, onOpenNode }: ProjectTreeProps
           <button
             type="button"
             className={cn(
-              "group flex h-[26px] w-full items-center gap-1 rounded-md px-1.5 text-left text-[12.5px] leading-none transition-colors",
+              "group flex h-[26px] w-max min-w-full items-center gap-1 rounded-md px-1.5 text-left text-[12.5px] leading-none whitespace-nowrap transition-colors",
               node.id === activeNodeId
                 ? "bg-primary/10 font-medium text-foreground"
                 : "text-default-600 hover:bg-black/[0.045] hover:text-foreground dark:text-default-400 dark:hover:bg-white/[0.055]",
@@ -89,7 +89,7 @@ export function ProjectTree({ tree, activeNodeId, onOpenNode }: ProjectTreeProps
               <span className="w-3 shrink-0" />
             )}
             <NodeIcon kind={node.kind} open={isOpen} />
-            <span className="truncate">{node.name}</span>
+            <span className="whitespace-nowrap">{node.name}</span>
           </button>
           {hasChildren && isOpen && renderNodes(node.children, depth + 1)}
         </div>

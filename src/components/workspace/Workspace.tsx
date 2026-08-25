@@ -267,7 +267,7 @@ export function Workspace() {
               <FolderOpen className="h-3.5 w-3.5" />
             </Button>
           </div>
-          <div className="min-h-0 flex-1 overflow-auto py-2 scrollbar-hide">
+          <div className="min-h-0 flex-1 overflow-auto py-2 scrollbar-thin">
             {tree ? (
               <ProjectTree tree={tree} activeNodeId={activeTab?.tab.nodeId} onOpenNode={openNode} />
             ) : (
