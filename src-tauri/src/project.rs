@@ -326,7 +326,8 @@ impl Project {
                 let rec = u.pa.records.get(*record).ok_or("record missing")?;
                 let m = rec.methods.get(*method).ok_or("method missing")?;
                 let mut body = String::new();
-                body.push_str(&format!(".function {}\n{{\n", m.signature));
+                // 真实格式中 `{` 位于 .function 行尾
+                body.push_str(&format!(".function {} {{\n", m.signature));
                 for line in &m.body {
                     body.push_str(line);
                     body.push('\n');

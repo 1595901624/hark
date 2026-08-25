@@ -215,14 +215,11 @@ impl PaFile {
         }
         for m in &rec.methods {
             out.push('\n');
-            out.push_str(&format!("    .function {}\n", m.signature));
-            out.push_str("    {\n");
+            // 真实格式中 `{` 位于 .function 行尾
+            out.push_str(&format!("    .function {} {{\n", m.signature));
             for line in &m.body {
-                if line.starts_with(char::is_whitespace) {
-                    out.push_str(line);
-                } else {
-                    out.push_str(&format!("        {line}\n"));
-                }
+                out.push_str(line);
+                out.push('\n');
             }
             out.push_str("    }\n");
         }
@@ -298,7 +295,11 @@ mod tests {
         let pa = PaFile::parse(SAMPLE);
         let text = pa.render_record(0).unwrap();
         assert!(text.starts_with(".record Lstd/core/String; {"));
-        assert!(text.contains(".function any Lstd/core/String;.toString(...)"));
+        // `{` 应位于 .function 行尾，而不是独立成行
+        assert!(text.contains(".function any Lstd/core/String;.toString(...) <static false> {"));
+        // 每条指令必须独占一行（缩进行不能丢失换行符）
+        assert!(text.contains("\n\tmov v0, v1\n"), "text: {text}");
+        assert!(text.contains("\n\treturn\n"));
         assert!(text.trim_end().ends_with('}'));
     }
 }
