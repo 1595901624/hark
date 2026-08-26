@@ -2,10 +2,14 @@
 //!
 //! abcde 不自行解析字节码，而是调用 OpenHarmony 官方工具链中的
 //! `ark_disasm` 将 `.abc` 反编译为标准 `.pa` 文本，保证输出与官方一致。
+//! 同时尝试附带 `--dump-literal-pools` 输出，为 ArkTS 还原提供
+//! 调用目标名称解析所需的字面量池信息。
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::decompiler::{parse_literal_names, LiteralNames};
 
 /// 按优先级定位官方 `ark_disasm` 可执行文件。
 ///
@@ -65,20 +69,35 @@ fn exe_names() -> [&'static str; 2] {
     }
 }
 
-/// 对单个 `.abc` 文件执行官方反编译，返回生成的 `.pa` 全文。
+/// 反编译并尝试附带字面量池 dump，返回 `(pa 全文, 名称表)`。
 ///
-/// 过程：在系统临时目录创建一次性工作目录 -> 执行
-/// `ark_disasm <abc> <工作目录>/output.pa` -> 读回文本 -> 清理工作目录。
-///
-/// 失败条件：进程启动失败、退出码非零且无输出、或输出为空；
-/// 错误信息中会附带 `ark_disasm` 的 stderr 以便排查版本不匹配等问题。
-pub fn disassemble(tool: &Path, abc_path: &Path) -> Result<String, String> {
+/// 先以 `--dump-literal-pools` 运行（旧版工具不认识该参数时会失败），
+/// 失败时回退到普通调用并返回空名称表。
+pub fn disassemble_with_names(tool: &Path, abc_path: &Path) -> Result<(String, LiteralNames), String> {
+    match run_once(tool, &["--dump-literal-pools"], abc_path) {
+        Ok(text) => {
+            let names = parse_literal_names(&text);
+            Ok((text, names))
+        }
+        Err(_) => {
+            let text = run_once(tool, &[], abc_path)?;
+            Ok((text, LiteralNames::default()))
+        }
+    }
+}
+
+/// 执行一次 ark_disasm 并读回输出文本。
+fn run_once(tool: &Path, extra_args: &[&str], abc_path: &Path) -> Result<String, String> {
     let out_dir = temp_work_dir()?;
     let pa_path = out_dir.join("output.pa");
 
-    let output = Command::new(tool)
-        .arg(abc_path)
-        .arg(&pa_path)
+    let mut cmd = Command::new(tool);
+    for a in extra_args {
+        cmd.arg(a);
+    }
+    cmd.arg(abc_path).arg(&pa_path);
+
+    let output = cmd
         .output()
         .map_err(|e| format!("启动 ark_disasm 失败: {e}"))?;
 

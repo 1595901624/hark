@@ -2,10 +2,12 @@
 //!
 //! 命令一览：
 //! - [`open_project`]：打开 `.abc` / `.hap` / `.har` 并返回项目树；
-//! - [`get_content`]：按节点 ID 获取内容切片；
+//! - [`get_content`]：按节点 ID 获取内容切片（支持 abc / ets 双视图）；
+//! - [`export_node_ets`]：把节点的 ArkTS 还原结果导出为文件；
 //! - [`close_project`]：关闭当前项目；
 //! - [`set_disassembler_path`]：配置官方 `ark_disasm` 路径。
 
+mod decompiler;
 mod pa;
 mod project;
 mod runner;
@@ -57,13 +59,33 @@ fn close_project(state: State<AppState>) {
 
 /// 获取指定节点的内容切片（类 / 方法 / 单元概览）。
 ///
+/// `view`：`"abc"`（默认）返回 pandasm 反汇编文本；
+/// `"ets"` 返回 ArkTS 还原结果。
+///
 /// # Errors
 /// 无已打开项目或节点 ID 无效时返回错误信息。
 #[tauri::command]
-fn get_content(node_id: u32, state: State<AppState>) -> Result<NodeContent, String> {
+fn get_content(node_id: u32, view: Option<String>, state: State<AppState>) -> Result<NodeContent, String> {
+    let view = view.as_deref().unwrap_or("abc");
     let guard = state.project.lock().unwrap();
     let p = guard.as_ref().ok_or("没有已打开的项目")?;
-    p.content(node_id)
+    p.content(node_id, view)
+}
+
+/// 把指定节点的 ArkTS 还原结果导出为 `.ets` 文件。
+///
+/// 内容与前端 `.ets` 视图完全一致；目标目录不存在时自动创建。
+///
+/// # Errors
+/// 无已打开项目、节点无效或写入失败时返回中文错误信息。
+#[tauri::command]
+fn export_node_ets(node_id: u32, path: String, state: State<AppState>) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("导出路径为空".into());
+    }
+    let guard = state.project.lock().unwrap();
+    let p = guard.as_ref().ok_or("没有已打开的项目")?;
+    p.export_ets(node_id, std::path::Path::new(&path))
 }
 
 /// 配置官方 `ark_disasm` 可执行文件路径。
@@ -101,6 +123,7 @@ pub fn run() {
             open_project,
             close_project,
             get_content,
+            export_node_ets,
             set_disassembler_path
         ])
         .run(tauri::generate_context!())

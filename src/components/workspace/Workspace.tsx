@@ -4,24 +4,27 @@
  * 布局：顶部标题栏 + 左侧可拖宽的项目树面板 + 右侧多标签代码区。
  *
  * 职责：
- * - 通过原生对话框 / Ctrl+O / 拖拽打开 `.abc` / `.hap` / `.har` 文件；
+ * - 通过原生对话框 / Ctrl+O / 拖拽打开 `.abc` / `.hap` 文件；
  * - 监听标题栏菜单派发的全局事件（打开文件 / 关闭项目 / 反编译器设置）；
  * - 管理编辑器标签（最多 12 个）并懒加载节点内容；
+ * - 每个内容区提供 `.abc`（反汇编）/ `.ets`（ArkTS 还原）双视图，
+ *   按需加载并缓存两份内容，支持把 `.ets` 导出为文件；
  * - 持久化侧栏宽度与 `ark_disasm` 路径配置。
  */
 import { useCallback, useEffect, useRef, useState } from "react"
-import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
+import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog"
 import { getCurrentWebview } from "@tauri-apps/api/webview"
-import { FileCode2, FolderOpen, LoaderCircle, Settings2 } from "lucide-react"
+import { Download, FileCode2, FolderOpen, LoaderCircle, Settings2 } from "lucide-react"
 import { ChevronsDownUp, ChevronsUpDown } from "lucide-react"
 import TitleBar from "../TitleBar"
 import { Button, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, addToast } from "../ui/base-ui"
 import { usePersistentState } from "../../hooks/usePersistentState"
 import { cn } from "../../lib/utils"
-import { api, type NodeContent, type TreeNode } from "../../lib/api"
+import { api, type NodeContent, type TreeNode, type ViewKind } from "../../lib/api"
 import { ProjectTree, type TreeCommand } from "./ProjectTree"
 import { EditorTabs, type EditorTab } from "./EditorTabs"
 import { CodeView } from "./CodeView"
+import { ViewSwitcher } from "./ViewSwitcher"
 
 /** 原生打开对话框的文件类型过滤器。 */
 const FILE_FILTERS = [
@@ -31,20 +34,27 @@ const FILE_FILTERS = [
   },
 ]
 
-/** 单个标签的完整状态：标签信息 + 异步加载的内容 / 错误。 */
+/** 单个标签的完整状态：标签信息 + 双视图内容缓存。 */
 interface TabEntry {
   /** 标签基础信息。 */
   tab: EditorTab
-  /** 已加载的内容切片；加载中 / 失败时为空。 */
-  content?: NodeContent
-  /** 内容是否正在加载。 */
-  loading?: boolean
-  /** 加载失败时的错误信息。 */
-  error?: string
+  /** 项目树节点类型（决定是否显示视图切换器）。 */
+  kind: TreeNode["kind"]
+  /** 当前激活的视图，默认 `.abc`。 */
+  view: ViewKind
+  /** 已加载的各视图内容。 */
+  contents: Partial<Record<ViewKind, NodeContent>>
+  /** 各视图是否正在加载。 */
+  loading: Partial<Record<ViewKind, boolean>>
+  /** 各视图加载失败的错误信息。 */
+  errors: Partial<Record<ViewKind, string>>
 }
 
 /** 同一时刻允许打开的最大标签数，超出时淘汰最早的标签。 */
 const MAX_TABS = 12
+
+/** 支持双视图切换的节点类型；资源节点只有一种内容。 */
+const VIEWABLE_KINDS = new Set<TreeNode["kind"]>(["class", "method", "abc", "root", "package"])
 
 /**
  * 渲染整个工作台界面。
@@ -184,42 +194,108 @@ export function Workspace() {
     return () => unlisten?.()
   }, [openFile])
 
-  // ---------- 标签管理 ----------
+  // ---------- 内容加载与视图切换 ----------
 
   /**
-   * 打开一个节点对应的标签（已存在时仅激活），并异步加载其内容。
-   * @param node 被点击的项目树节点
+   * 加载某个标签指定视图的内容（已缓存或加载中时跳过）。
+   * @param tabKey 标签 key
+   * @param nodeId 节点 ID
+   * @param view 视图类型
    */
-  const openNode = useCallback((node: TreeNode) => {
-    const key = `node-${node.id}`
+  const loadView = useCallback((tabKey: string, nodeId: number, view: ViewKind) => {
     setTabs(prev => {
-      if (prev.some(entry => entry.tab.key === key)) return prev
-      const entry: TabEntry = {
-        tab: { key, title: node.name, nodeId: node.id },
-        loading: true,
-      }
-      const next = [...prev, entry]
-      return next.length > MAX_TABS ? next.slice(next.length - MAX_TABS) : next
+      const entry = prev.find(e => e.tab.key === tabKey)
+      if (!entry || entry.contents[view] || entry.loading[view]) return prev
+      return prev.map(e =>
+        e.tab.key === tabKey ? { ...e, loading: { ...e.loading, [view]: true }, errors: { ...e.errors, [view]: undefined } } : e,
+      )
     })
-    setActiveKey(key)
 
-    void api.getContent(node.id).then(
+    void api.getContent(nodeId, view).then(
       content =>
         setTabs(prev =>
           prev.map(entry =>
-            entry.tab.key === key ? { ...entry, content, loading: false } : entry,
+            entry.tab.key === tabKey
+              ? { ...entry, contents: { ...entry.contents, [view]: content }, loading: { ...entry.loading, [view]: false } }
+              : entry,
           ),
         ),
       err =>
         setTabs(prev =>
           prev.map(entry =>
-            entry.tab.key === key
-              ? { ...entry, loading: false, error: String(err) }
+            entry.tab.key === tabKey
+              ? { ...entry, loading: { ...entry.loading, [view]: false }, errors: { ...entry.errors, [view]: String(err) } }
               : entry,
           ),
         ),
     )
   }, [])
+
+  /**
+   * 打开一个节点对应的标签（已存在时仅激活），并异步加载其内容。
+   * @param node 被点击的项目树节点
+   */
+  const openNode = useCallback(
+    (node: TreeNode) => {
+      const key = `node-${node.id}`
+      setTabs(prev => {
+        if (prev.some(entry => entry.tab.key === key)) return prev
+        const entry: TabEntry = {
+          tab: { key, title: node.name, nodeId: node.id },
+          kind: node.kind,
+          view: "abc",
+          contents: {},
+          loading: {},
+          errors: {},
+        }
+        const next = [...prev, entry]
+        return next.length > MAX_TABS ? next.slice(next.length - MAX_TABS) : next
+      })
+      setActiveKey(key)
+      loadView(key, node.id, "abc")
+    },
+    [loadView],
+  )
+
+  /**
+   * 切换某个标签的内容视图（首次切换时触发懒加载）。
+   * @param tabKey 标签 key
+   * @param view 目标视图
+   */
+  const switchView = useCallback(
+    (tabKey: string, view: ViewKind) => {
+      let target: TabEntry | undefined
+      setTabs(prev => {
+        target = prev.find(entry => entry.tab.key === tabKey)
+        return prev.map(entry => (entry.tab.key === tabKey ? { ...entry, view } : entry))
+      })
+      setActiveKey(tabKey)
+      if (target && !target.contents[view] && !target.loading[view]) {
+        loadView(tabKey, target.tab.nodeId, view)
+      }
+    },
+    [loadView],
+  )
+
+  /** 把当前激活标签的 `.ets` 视图导出为文件。 */
+  const exportActiveEts = useCallback(async () => {
+    const entry = tabs.find(e => e.tab.key === activeKey)
+    const content = entry?.contents.ets
+    if (!entry || !content) return
+    const base = content.title.split(".").pop() ?? "output"
+    const safeName = base.replace(/[\\/:*?"<>|]/g, "_") || "output"
+    const selected = await saveFileDialog({
+      defaultPath: `${safeName}.ets`,
+      filters: [{ name: "ArkTS", extensions: ["ets"] }],
+    })
+    if (typeof selected !== "string") return
+    try {
+      await api.exportNodeEts(entry.tab.nodeId, selected)
+      addToast({ title: "导出成功", description: selected, severity: "success" })
+    } catch (e) {
+      addToast({ title: "导出失败", description: String(e), severity: "danger" })
+    }
+  }, [tabs, activeKey])
 
   /**
    * 关闭指定标签；若关闭的是激活标签，则激活相邻的标签。
@@ -239,6 +315,10 @@ export function Workspace() {
 
   /** 当前激活的标签状态。 */
   const activeTab = tabs.find(entry => entry.tab.key === activeKey)
+  /** 激活标签当前视图的内容状态 */
+  const activeContent = activeTab?.contents[activeTab.view]
+  const activeLoading = activeTab?.loading[activeTab.view]
+  const activeError = activeTab?.errors[activeTab.view]
 
   // ---------- 侧栏拖宽 ----------
 
@@ -366,28 +446,57 @@ export function Workspace() {
             </div>
           )}
 
+          {/* 内容标题栏：标题 + 双视图切换 + 导出 */}
+          {(busyMessage || activeTab) && (
+            <div className="flex h-[34px] shrink-0 items-center justify-between gap-2 border-b border-default-200/50 bg-chrome/40 px-4">
+              <span className="truncate text-[11px] text-default-400">
+                {busyMessage ? busyMessage : activeContent?.title ?? ""}
+              </span>
+              {!busyMessage && activeTab && VIEWABLE_KINDS.has(activeTab.kind) && (
+                <div className="flex items-center gap-1.5">
+                  <ViewSwitcher
+                    value={activeTab.view}
+                    onChange={view => activeTab && switchView(activeTab.tab.key, view)}
+                  />
+                  {activeTab.view === "ets" && (
+                    <Button
+                      isIconOnly
+                      size="sm"
+                      variant="light"
+                      aria-label="导出 .ets"
+                      title="导出 .ets"
+                      isDisabled={!activeContent}
+                      onPress={() => void exportActiveEts()}
+                      className="h-6 w-6 min-w-6 rounded-md text-default-500 hover:bg-black/[0.05] dark:hover:bg-white/[0.07]"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {busyMessage ? (
             <EmptyState
               icon={<LoaderCircle className="h-10 w-10 animate-spin text-primary/70" />}
               text={busyMessage}
             />
-          ) : activeTab?.loading ? (
+          ) : activeLoading ? (
             <EmptyState
-              icon={<LoaderCircle className="h-8 w-8 animate-spin text-primary/70" />}
-              text="正在加载内容…"
+              icon={
+                activeTab?.view === "ets" ? (
+                  <LoaderCircle className="h-8 w-8 animate-spin text-primary/70" />
+                ) : (
+                  <LoaderCircle className="h-8 w-8 animate-spin text-primary/70" />
+                )
+              }
+              text={activeTab?.view === "ets" ? "正在还原 ArkTS…" : "正在加载内容…"}
             />
-          ) : activeTab?.error ? (
-            <EmptyState
-              icon={<FileCode2 className="h-10 w-10 text-default-300" />}
-              text={activeTab.error}
-            />
-          ) : activeTab?.content ? (
-            <>
-              <div className="shrink-0 border-b border-default-200/50 px-4 py-1.5 text-[11px] text-default-400">
-                {activeTab.content.title}
-              </div>
-              <CodeView content={activeTab.content.body} language={activeTab.content.language} />
-            </>
+          ) : activeError ? (
+            <EmptyState icon={<FileCode2 className="h-10 w-10 text-default-300" />} text={activeError} />
+          ) : activeContent ? (
+            <CodeView content={activeContent.body} language={activeContent.language} />
           ) : (
             <EmptyState
               icon={<FileCode2 className="h-12 w-12 text-default-300" />}

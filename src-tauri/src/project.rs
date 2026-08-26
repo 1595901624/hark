@@ -7,6 +7,7 @@
 //! 2. 逐个调用官方 `ark_disasm`（见 [`crate::runner`]）生成 `.pa` 文本；
 //! 3. 解析 `.pa`（见 [`crate::pa`]）并按 record 展示名构建包层级树。
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
@@ -14,7 +15,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::pa::{PaFile, PaRecord};
+use crate::decompiler::{self, LiteralNames};
+use crate::pa::{PaFile, PaMethod, PaRecord};
 use crate::runner;
 
 /// 树节点的类型，前端据此选择图标与交互行为。
@@ -92,6 +94,8 @@ struct AbcUnit {
     name: String,
     /// 反编译并解析后的 `.pa` 结构。
     pa: PaFile,
+    /// 字面量池名称表（调用目标解析；旧版工具可能为空）。
+    names: LiteralNames,
 }
 
 /// 一个已打开的项目（对应一个用户打开的文件）。
@@ -113,6 +117,8 @@ pub struct Project {
     tree: TreeNode,
     /// 节点 ID 分配计数器。
     next_id: u32,
+    /// ArkTS 还原结果的惰性缓存（节点 ID -> 内容）。
+    ets_cache: RefCell<HashMap<u32, NodeContent>>,
 }
 
 impl Project {
@@ -200,10 +206,11 @@ impl Project {
             }
             let mut units = Vec::with_capacity(abc_files.len());
             for (name, abc_path) in &abc_files {
-                let text = runner::disassemble(&tool, abc_path)?;
+                let (text, names) = runner::disassemble_with_names(&tool, abc_path)?;
                 units.push(AbcUnit {
                     name: name.clone(),
                     pa: PaFile::parse(&text),
+                    names,
                 });
             }
             Ok(units)
@@ -230,6 +237,7 @@ impl Project {
                 children: vec![],
             },
             next_id: 0,
+            ets_cache: RefCell::new(HashMap::new()),
         };
         project.build_tree();
         Ok(project)
@@ -296,9 +304,18 @@ impl Project {
 
     /// 获取指定节点的内容切片（标题、语言、正文）。
     ///
-    /// 类节点返回完整 record 文本；方法节点返回单方法文本；
-    /// 单元节点返回概览信息。未知节点返回错误。
-    pub fn content(&self, node_id: u32) -> Result<NodeContent, String> {
+    /// `view` 为 `"abc"` 时返回 pandasm 反汇编文本（原行为）；
+    /// 为 `"ets"` 时返回 ArkTS 还原结果（惰性生成并缓存）。
+    /// 未知节点返回错误。
+    pub fn content(&self, node_id: u32, view: &str) -> Result<NodeContent, String> {
+        if view == "ets" {
+            if let Some(cached) = self.ets_cache.borrow().get(&node_id) {
+                return Ok(cached.clone());
+            }
+            let content = self.generate_ets(node_id)?;
+            self.ets_cache.borrow_mut().insert(node_id, content.clone());
+            return Ok(content);
+        }
         match self.nodes.get(&node_id) {
             Some(NodePayload::Unit { unit }) => {
                 let u = &self.units[*unit];
@@ -325,25 +342,10 @@ impl Project {
                 let u = &self.units[*unit];
                 let rec = u.pa.records.get(*record).ok_or("record missing")?;
                 let m = rec.methods.get(*method).ok_or("method missing")?;
-                let mut body = String::new();
-                // 真实格式中 `{` 位于 .function 行尾
-                body.push_str(&format!(".function {} {{\n", m.signature));
-                // 指令统一重排缩进（源文件中为单 tab）
-                for line in &m.body {
-                    let trimmed = line.trim_start();
-                    if trimmed.is_empty() {
-                        body.push('\n');
-                    } else {
-                        body.push_str("    ");
-                        body.push_str(trimmed);
-                        body.push('\n');
-                    }
-                }
-                body.push_str("}\n");
                 Ok(NodeContent {
                     title: format!("{}.{}", rec.display_name, m.name),
                     language: "asm".into(),
-                    body,
+                    body: render_method_asm(m),
                 })
             }
             Some(NodePayload::Resource { entry }) => {
@@ -361,6 +363,76 @@ impl Project {
             None => Err(format!("未知节点 #{node_id}")),
         }
     }
+
+    /// 生成节点的 ArkTS 还原内容（不查缓存）。
+    fn generate_ets(&self, node_id: u32) -> Result<NodeContent, String> {
+        match self.nodes.get(&node_id) {
+            Some(NodePayload::Unit { unit }) => {
+                let u = &self.units[*unit];
+                Ok(NodeContent {
+                    title: u.name.clone(),
+                    language: "ts".into(),
+                    body: format!(
+                        "// {}\n// 共 {} 个类型；展开左侧节点查看单个类的还原结果。\n",
+                        u.name,
+                        u.pa.records.len(),
+                    ),
+                })
+            }
+            Some(NodePayload::Class { unit, record }) => {
+                let u = &self.units[*unit];
+                let rec = u.pa.records.get(*record).ok_or("record missing")?;
+                let body = decompiler::record_to_arkts(rec, &u.names);
+                Ok(NodeContent {
+                    title: rec.display_name.clone(),
+                    language: "ts".into(),
+                    body,
+                })
+            }
+            Some(NodePayload::Method { unit, record, method }) => {
+                let u = &self.units[*unit];
+                let rec = u.pa.records.get(*record).ok_or("record missing")?;
+                let m = rec.methods.get(*method).ok_or("method missing")?;
+                let body = decompiler::method_to_arkts(&rec.display_name, m, &u.names);
+                Ok(NodeContent {
+                    title: format!("{}.{}", rec.display_name, m.name),
+                    language: "ts".into(),
+                    body,
+                })
+            }
+            // 单元概览与资源节点没有汇编语义，直接沿用 abc 视图
+            _ => self.content(node_id, "abc"),
+        }
+    }
+
+    /// 导出指定节点的 `.ets` 内容到目标路径。
+    pub fn export_ets(&self, node_id: u32, target: &Path) -> Result<(), String> {
+        let content = self.content(node_id, "ets")?;
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
+        }
+        fs::write(target, content.body)
+            .map_err(|e| format!("写入 {target:?} 失败: {e}"))
+    }
+}
+
+/// 渲染单方法的 pandasm 文本（`.function` 头 + 重排缩进的指令体）。
+fn render_method_asm(m: &PaMethod) -> String {
+    let mut body = String::new();
+    // 真实格式中 `{` 位于 .function 行尾
+    body.push_str(&format!(".function {} {{\n", m.signature));
+    for line in &m.body {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            body.push('\n');
+        } else {
+            body.push_str("    ");
+            body.push_str(trimmed);
+            body.push('\n');
+        }
+    }
+    body.push_str("}\n");
+    body
 }
 
 /// 在系统临时目录下创建本次打开操作的唯一工作目录。

@@ -34,11 +34,14 @@ export interface TreeNode {
 export interface NodeContent {
   /** 内容标题（完整类名 / `类.方法` / 单元名）。 */
   title: string
-  /** 内容语言标记（`asm` 或 `text`），决定高亮方式。 */
+  /** 内容语言标记（`asm` / `ts` / `text`），决定高亮方式。 */
   language: string
   /** 正文文本。 */
   body: string
 }
+
+/** 节点内容视图：`.abc` 反汇编 / `.ets` ArkTS 还原。 */
+export type ViewKind = "abc" | "ets"
 
 /** 后端命令的统一调用入口。 */
 export const api = {
@@ -59,9 +62,19 @@ export const api = {
   /**
    * 获取指定节点的内容切片。
    * @param nodeId 项目树节点 ID
+   * @param view 内容视图：`abc` 反汇编（默认）/ `ets` ArkTS 还原
    */
-  getContent(nodeId: number): Promise<NodeContent> {
-    return invoke<NodeContent>("get_content", { nodeId })
+  getContent(nodeId: number, view: ViewKind = "abc"): Promise<NodeContent> {
+    return invoke<NodeContent>("get_content", { nodeId, view })
+  },
+
+  /**
+   * 把节点的 `.ets` 还原结果导出到目标路径。
+   * @param nodeId 项目树节点 ID
+   * @param path 导出文件的绝对路径
+   */
+  exportNodeEts(nodeId: number, path: string): Promise<void> {
+    return invoke<void>("export_node_ets", { nodeId, path })
   },
 
   /**
