@@ -47,7 +47,7 @@ fn default_view() -> String {
     "abc".into()
 }
 
-/// 工作区快照：已打开标签列表 + 激活标签。
+/// 工作区快照：已打开标签列表 + 激活标签 + 项目树展开状态。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SavedWorkspace {
@@ -57,6 +57,10 @@ pub struct SavedWorkspace {
     /// 激活标签对应的节点 ID；无激活标签时为 `None`。
     #[serde(default)]
     pub active_node_id: Option<u32>,
+    /// 保存时处于展开状态的项目树节点 ID（恢复侧边栏展开现场）。
+    /// 旧版本 `.hark` 文件缺少该字段时按空列表处理。
+    #[serde(default)]
+    pub expanded_node_ids: Vec<u32>,
 }
 
 /// 快照中记录的源项目信息。
@@ -220,6 +224,7 @@ mod tests {
                     SavedTab { node_id: 12, view: "ets".into() },
                 ],
                 active_node_id: Some(5),
+                expanded_node_ids: vec![1, 2, 5, 9],
             },
         }
     }
@@ -246,6 +251,7 @@ mod tests {
         assert_eq!(loaded.workspace.tabs.len(), 2);
         assert_eq!(loaded.workspace.active_node_id, Some(5));
         assert_eq!(loaded.workspace.tabs[1].view, "ets");
+        assert_eq!(loaded.workspace.expanded_node_ids, vec![1, 2, 5, 9]);
 
         fs::remove_file(&path).unwrap();
     }

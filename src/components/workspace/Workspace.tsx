@@ -7,7 +7,7 @@
  * - 通过原生对话框 / Ctrl+O / 拖拽打开 `.abc` / `.hap` / `.hark` 文件；
  * - 监听标题栏菜单派发的全局事件（打开文件 / 保存 / 另存为 / 关闭项目 / 反编译器设置）；
  * - 「保存 / 另存为」把当前项目与工作区快照写入 `.hark` 二进制工作区文件，
- *   打开 `.hark` 时校验完整性并恢复标签与视图现场；
+ *   打开 `.hark` 时校验完整性并恢复标签、视图与项目树展开现场；
  * - 管理编辑器标签（最多 12 个）并懒加载节点内容；
  * - 每个内容区提供 `.abc`（反汇编）/ `.ets`（ArkTS 还原）双视图，
  *   按需加载并缓存两份内容，支持把 `.ets` 导出为文件；
@@ -100,6 +100,8 @@ export function Workspace() {
   /** 激活标签 key 的最新快照（供回调同步读取） */
   const activeKeyRef = useRef<string | undefined>(activeKey)
   activeKeyRef.current = activeKey
+  /** 项目树当前展开的节点 ID 列表（由 ProjectTree 回报，供保存快照） */
+  const expandedIdsRef = useRef<number[]>([])
   /** 侧栏宽度（持久化） */
   const [sidebarWidth, setSidebarWidth] = usePersistentState<number>("workspace-sidebar-width", 280)
   /** 侧栏是否收起（持久化，由标题栏左上角按钮切换） */
@@ -214,6 +216,10 @@ export function Workspace() {
         setTabs([])
         setActiveKey(undefined)
       }
+      // 恢复侧边栏项目树的展开状态（快照中不存在的 ID 会被静默忽略）
+      if (isHark && ws) {
+        setTreeCommand({ type: "set-expanded", ids: ws.expandedNodeIds ?? [], seq: ++treeCommandSeq.current })
+      }
       // 同步一次工具路径，便于后端立即校验/缓存
       void api.setDisassemblerPath(toolPathRef.current.trim() || null)
     } catch (e) {
@@ -235,6 +241,11 @@ export function Workspace() {
 
   // ---------- 保存 / 另存为（.hark）----------
 
+  /** 接收项目树上报的最新展开节点 ID 列表。 */
+  const handleExpandedChange = useCallback((ids: number[]) => {
+    expandedIdsRef.current = ids
+  }, [])
+
   /** 从当前标签状态整理出待保存的工作区快照。 */
   const buildWorkspaceSnapshot = useCallback((): SavedWorkspace => ({
     tabs: tabsRef.current.map(e => ({ nodeId: e.tab.nodeId, view: e.view })),
@@ -242,6 +253,7 @@ export function Workspace() {
       activeKeyRef.current != null
         ? tabsRef.current.find(e => e.tab.key === activeKeyRef.current)?.tab.nodeId ?? null
         : null,
+    expandedNodeIds: expandedIdsRef.current,
   }), [])
 
   /**
@@ -536,6 +548,7 @@ export function Workspace() {
                 activeNodeId={activeTab?.tab.nodeId}
                 onOpenNode={openNode}
                 command={treeCommand}
+                onExpandedChange={handleExpandedChange}
               />
             ) : (
               <p className="px-4 py-8 text-center text-[12.5px] leading-relaxed text-default-400">

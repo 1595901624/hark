@@ -51,10 +51,12 @@ export interface SavedTab {
   view: ViewKind
 }
 
-/** `.hark` 工作区快照：已打开标签列表 + 激活标签。 */
+/** `.hark` 工作区快照：已打开标签列表 + 激活标签 + 项目树展开状态。 */
 export interface SavedWorkspace {
   tabs: SavedTab[]
   activeNodeId?: number | null
+  /** 保存时处于展开状态的项目树节点 ID（恢复侧边栏展开现场）。 */
+  expandedNodeIds?: number[] | null
 }
 
 /** 打开 `.hark` 时后端返回的会话元数据。 */
