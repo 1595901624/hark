@@ -116,6 +116,8 @@ pub enum Expr {
     New { class: String, args: Vec<Expr> },
     Bin { op: BinOp, l: Box<Expr>, r: Box<Expr> },
     Un { op: UnOp, e: Box<Expr> },
+    /// instanceof 关系运算。
+    Instanceof(Box<Expr>, Box<Expr>),
     Await(Box<Expr>),
     Ternary { c: Box<Expr>, t: Box<Expr>, f: Box<Expr> },
     /// 对象字面量。
@@ -216,6 +218,15 @@ pub fn render_expr(e: &Expr, parent_prec: u8) -> String {
             );
             wrap(text, p)
         }
+        Expr::Instanceof(l, r) => {
+            // instanceof 与关系运算符同优先级
+            let text = format!(
+                "{} instanceof {}",
+                render_expr(l, 4),
+                render_expr(r, 4)
+            );
+            wrap(text, 3)
+        }
         Expr::Un { op, e } => {
             // 一元运算作用于二元表达式需要括号
             let inner = render_expr(e, 10);
@@ -299,6 +310,8 @@ pub enum Stmt {
     If { cond: Expr, then: Vec<Stmt>, els: Option<Vec<Stmt>> },
     /// 循环。
     While { cond: Expr, body: Vec<Stmt> },
+    /// try/catch 区域（catch 参数名固定为 e）。
+    TryCatch { body: Vec<Stmt>, catch: Vec<Stmt> },
     /// 注释行。
     Comment(String),
     /// 原始汇编块兜底。
@@ -319,6 +332,8 @@ pub struct Interp {
     pub pending_decls: Vec<Stmt>,
     /// 临时变量计数器。
     tmp_counter: usize,
+    /// 已生成过声明的变量名（防止 merge 重复声明）。
+    decls_emitted: std::collections::HashSet<String>,
 }
 
 impl Interp {
@@ -331,6 +346,7 @@ impl Interp {
             lex: HashMap::new(),
             pending_decls: vec![],
             tmp_counter: 0,
+            decls_emitted: std::collections::HashSet::new(),
         }
     }
 
@@ -436,7 +452,9 @@ impl Interp {
                     a.regs.insert(k, mk());
                     b.regs.insert(k, mk());
                     merged.regs.insert(k, mk());
-                    merged.pending_decls.push(Stmt::Decl { name, init: None });
+                    if merged.decls_emitted.insert(name.clone()) {
+                        merged.pending_decls.push(Stmt::Decl { name, init: None });
+                    }
                 }
             }
         }

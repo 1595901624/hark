@@ -22,16 +22,33 @@ struct PLine {
     raw: String,
 }
 
+/// `.catchall` 指令解析出的 try/catch 区域（行下标均指向指令位置）。
+#[derive(Clone, Copy)]
+struct TryCatchRegion {
+    /// try 体起始。
+    start: usize,
+    /// try 体结束标签附着行（通常是一条 jmp，跳过不还原）。
+    end_jmp: usize,
+    /// catch 处理体起始。
+    handler: usize,
+    /// 汇合点（handler 结束后的公共代码）。
+    join: usize,
+}
+
 /// 方法级不可变环境。
 struct Env<'a> {
     lines: &'a [PLine],
     /// 标签名 -> 行下标。
-    labels: HashMap<String, usize>,
+    labels: &'a HashMap<String, usize>,
     /// 循环头行下标集合。
-    loops: HashSet<usize>,
+    loops: &'a HashSet<usize>,
     names: &'a Names,
     /// 是否检测到 async 指令。
     async_flag: &'a Cell<bool>,
+    /// 隐式对象寄存器键（实例方法为 this；静态方法退化为临时槽）。
+    this_key: u16,
+    /// `.catchall` 区域列表。
+    catches: &'a [TryCatchRegion],
 }
 
 /// 单步执行结果。
@@ -84,20 +101,98 @@ pub fn render_method_body(sig: &Sig, body: &[String], names: &Names) -> String {
         }
     }
 
-    // 参数绑定：实例方法 v0 = this，其后依次是 p1..pn
+    // 参数绑定：
+    // - 方法体使用参数寄存器 aN 时按 a 组绑定（实例方法 a0 = this）；
+    // - 否则退回旧约定（实例方法 v0 = this，其后 v1..vn）；
+    // - 工具链合成的初始化方法不绑定 this 与参数
+    //   （其寄存器是状态机槽位而非调用实参）。
+    let uses_arg_regs = plines.iter().any(|p| match &p.line {
+        Line::Insn(insn) => insn.operands.iter().any(|o| matches!(o, Operand::Arg(_))),
+        _ => false,
+    });
+    let synthetic = sig.is_synthetic();
     let mut params: HashMap<u16, String> = HashMap::new();
-    let mut off: u16 = 0;
-    if !sig.is_static {
-        params.insert(0, "this".to_string());
-        off = 1;
+    if !synthetic {
+        if uses_arg_regs {
+            let mut off: u16 = 0;
+            if !sig.is_static {
+                params.insert(instr::ARG_BASE, "this".to_string());
+                off = 1;
+            }
+            for i in 0..sig.params.len() {
+                params.insert(instr::ARG_BASE + off + i as u16, format!("p{}", i + 1));
+            }
+        } else {
+            let mut off: u16 = 0;
+            if !sig.is_static {
+                params.insert(0, "this".to_string());
+                off = 1;
+            }
+            for i in 0..sig.params.len() {
+                params.insert(off + i as u16, format!("p{}", i + 1));
+            }
+        }
     }
-    for i in 0..sig.params.len() {
-        params.insert(off + i as u16, format!("p{}", i + 1));
-    }
+    // 隐式对象寄存器（stobjbyname 等省略对象时的缺省）：实例方法为 this
+    let this_key: u16 = if !sig.is_static && !synthetic && uses_arg_regs {
+        instr::ARG_BASE
+    } else if !sig.is_static && !synthetic {
+        0
+    } else {
+        u16::MAX // 无语义 this：退化为普通临时寄存器 vMAX
+    };
 
     let async_flag = Cell::new(sig.is_async_hint);
     let mut st = Interp::new(params);
-    let env = Env { lines: &plines, labels, loops, names, async_flag: &async_flag };
+
+    // `.catchall start, end, handler` 区域预扫描
+    let mut catches: Vec<TryCatchRegion> = vec![];
+    for p in plines.iter() {
+        let raw = p.raw.trim();
+        if !raw.starts_with(".catchall") {
+            continue;
+        }
+        let rest = &raw[".catchall".len()..];
+        let idents: Vec<&str> = rest
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if idents.len() < 3 {
+            continue;
+        }
+        let (Some(&start), Some(&end_jmp), Some(&handler)) = (
+            labels.get(idents[0]),
+            labels.get(idents[1]),
+            labels.get(idents[2]),
+        ) else {
+            continue;
+        };
+        // 两种形态：
+        // - 常规：结束标签附着在一条 jmp 上（跳过它），其目标即汇合点，
+        //   处理体位于 handler 标签与汇合点之间；
+        // - 退化：handler 与结束为同一标签，处理体从结束标签直落到方法尾。
+        let (join, handler_start) = match &plines[end_jmp].line {
+            Line::Insn(insn) => match instr::classify(insn) {
+                Kind::Jmp(Jump::Always, t) => {
+                    let j = labels.get(&t).copied().unwrap_or(handler);
+                    (j, handler)
+                }
+                _ => (plines.len(), end_jmp),
+            },
+            _ => (plines.len(), end_jmp),
+        };
+        catches.push(TryCatchRegion { start, end_jmp, handler: handler_start, join });
+    }
+
+    let env = Env {
+        lines: &plines,
+        labels: &labels,
+        loops: &loops,
+        names,
+        async_flag: &async_flag,
+        this_key,
+        catches: &catches,
+    };
 
     let mut out: Vec<Stmt> = vec![];
     walk(&mut st, &mut out, 0, plines.len(), &env);
@@ -219,12 +314,16 @@ pub fn method_to_arkts(
 
 /// 类成员形式的方法头：`ctor(p1: any)` / `foo(p1: any): void`。
 fn method_head(s: &Sig) -> String {
-    let args: Vec<String> = s
-        .params
-        .iter()
-        .enumerate()
-        .map(|(i, t)| format!("p{}: {}", i + 1, Sig::ts_type(t)))
-        .collect();
+    // 合成方法（模块入口等）的寄存器不是调用实参，头都不带参数
+    let args: Vec<String> = if s.is_synthetic() {
+        vec![]
+    } else {
+        s.params
+            .iter()
+            .enumerate()
+            .map(|(i, t)| format!("p{}: {}", i + 1, Sig::ts_type(t)))
+            .collect()
+    };
     if s.is_ctor() {
         return format!("constructor({})", args.join(", "));
     }
@@ -238,12 +337,15 @@ fn method_head(s: &Sig) -> String {
 
 /// 顶层函数形式的函数头：`main(p1: any): void`。
 fn function_head(s: &Sig) -> String {
-    let args: Vec<String> = s
-        .params
-        .iter()
-        .enumerate()
-        .map(|(i, t)| format!("p{}: {}", i + 1, Sig::ts_type(t)))
-        .collect();
+    let args: Vec<String> = if s.is_synthetic() {
+        vec![]
+    } else {
+        s.params
+            .iter()
+            .enumerate()
+            .map(|(i, t)| format!("p{}: {}", i + 1, Sig::ts_type(t)))
+            .collect()
+    };
     format!(
         "{}({}): {}",
         safe_ident(&s.name),
@@ -258,6 +360,11 @@ fn function_head(s: &Sig) -> String {
 fn walk(st: &mut Interp, out: &mut Vec<Stmt>, lo: usize, hi: usize, env: &Env) {
     let mut i = lo;
     while i < hi {
+        // try/catch 区域优先
+        if let Some(next) = try_catch_at(st, out, i, hi, env) {
+            i = next;
+            continue;
+        }
         if env.loops.contains(&i) {
             if let Some(next) = try_while(st, out, i, hi, env) {
                 i = next;
@@ -276,8 +383,16 @@ fn walk(st: &mut Interp, out: &mut Vec<Stmt>, lo: usize, hi: usize, env: &Env) {
             IfScan::None => match step(st, out, i, env) {
                 StepResult::Normal => i += 1,
                 StepResult::Terminal => {
+                    // async 状态机的 return 之后代码仍可达（不同恢复模式），
+                    // 继续线性执行而不是按不可达丢弃
+                    if env.async_flag.get() {
+                        i += 1;
+                        continue;
+                    }
                     if resolve_pos(env, i + 1).is_some_and(|p| p < hi) {
-                        out.push(unreachable_block(env, i + 1, hi));
+                        if let Some(b) = unreachable_block(env, i + 1, hi) {
+                            out.push(b);
+                        }
                     }
                     break;
                 }
@@ -330,8 +445,14 @@ fn try_if(st: &mut Interp, out: &mut Vec<Stmt>, lo: usize, hi: usize, env: &Env)
         match step(st, out, i, env) {
             StepResult::Normal => i += 1,
             StepResult::Terminal => {
+                if env.async_flag.get() {
+                    i += 1;
+                    continue;
+                }
                 if resolve_pos(env, i + 1).is_some_and(|p| p < hi) {
-                    out.push(unreachable_block(env, i + 1, hi));
+                    if let Some(b) = unreachable_block(env, i + 1, hi) {
+                        out.push(b);
+                    }
                 }
                 return IfScan::Done(hi);
             }
@@ -425,6 +546,53 @@ fn try_if(st: &mut Interp, out: &mut Vec<Stmt>, lo: usize, hi: usize, env: &Env)
     }
 }
 
+/// 若 `i` 是某个 `.catchall` 区域的起始，生成 try/catch 结构。
+fn try_catch_at(st: &mut Interp, out: &mut Vec<Stmt>, i: usize, hi: usize, env: &Env) -> Option<usize> {
+    let region = *env.catches.iter().find(|t| t.start == i)?;
+    if region.end_jmp > hi || region.join > hi {
+        return None;
+    }
+
+    // 子作用域排除当前区域，避免体/处理体重入同一 try
+    let inner: Vec<TryCatchRegion> = env
+        .catches
+        .iter()
+        .copied()
+        .filter(|t| t.start != region.start)
+        .collect();
+    let body_env = Env {
+        lines: env.lines,
+        labels: env.labels,
+        loops: env.loops,
+        names: env.names,
+        async_flag: env.async_flag,
+        this_key: env.this_key,
+        catches: &inner,
+    };
+    let catch_env = Env { catches: &inner, ..body_env };
+
+    let pre = st.snapshot();
+    let mut body_st = pre.clone();
+    let mut body_out: Vec<Stmt> = vec![];
+    walk(&mut body_st, &mut body_out, i, region.end_jmp, &body_env);
+
+    let mut catch_st = pre.clone();
+    let mut catch_out: Vec<Stmt> = vec![];
+    // 异常对象注入累加器：处理体开头的 sta 会把它存入局部
+    catch_st.acc = Some(Expr::Ident("e".into()));
+    walk(&mut catch_st, &mut catch_out, region.handler, region.join.max(region.handler), &catch_env);
+    flush_side_effects(&mut catch_st, &mut catch_out);
+
+    let mut merged = Interp::merge(&mut body_st, &mut catch_st);
+    for d in merged.drain_pending() {
+        out.push(d);
+    }
+    *st = merged;
+
+    out.push(Stmt::TryCatch { body: body_out, catch: catch_out });
+    Some(region.join)
+}
+
 /// 尝试在循环头 `h` 处识别 while 循环。成功返回循环之后的下标。
 fn try_while(st: &mut Interp, out: &mut Vec<Stmt>, h: usize, hi: usize, env: &Env) -> Option<usize> {
     // 找到跳回循环头的闭合 jmp
@@ -496,13 +664,26 @@ fn try_while(st: &mut Interp, out: &mut Vec<Stmt>, h: usize, hi: usize, env: &En
     Some((j + 1).min(hi))
 }
 
-/// 生成「不可达指令」兜底块。
-fn unreachable_block(env: &Env, lo: usize, hi: usize) -> Stmt {
-    let mut raws: Vec<String> = vec!["未还原的后续指令:".to_string()];
+/// 生成「不可达指令」兜底块；剩余仅为 return / 标签时无需输出。
+fn unreachable_block(env: &Env, lo: usize, hi: usize) -> Option<Stmt> {
+    let mut raws: Vec<String> = vec![];
     for p in env.lines.iter().take(hi).skip(lo) {
-        raws.push(p.raw.clone());
+        match &p.line {
+            Line::Label(_) | Line::Directive(_) => continue,
+            Line::Insn(insn) => {
+                if matches!(instr::classify(insn), Kind::Ret(_)) {
+                    continue;
+                }
+                raws.push(p.raw.clone());
+            }
+        }
     }
-    Stmt::Raw(raws)
+    if raws.is_empty() {
+        return None;
+    }
+    let mut all = vec!["未还原的后续指令:".to_string()];
+    all.extend(raws);
+    Some(Stmt::Raw(all))
 }
 
 /// 解析行下标：跳过独立标签 / 伪指令行，返回其后第一条指令的下标。
@@ -642,13 +823,26 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
             st.write_reg(d, Expr::Int(i));
         }
         Kind::LoadAcc(op) => {
+            // 常量覆盖未消费的副作用调用时，先把调用保留为语句
+            if let Some(old) = &st.acc {
+                if matches!(
+                    op,
+                    Operand::Imm(_) | Operand::Float(_) | Operand::Bool(_) | Operand::Str(_) | Operand::Null | Operand::Undefined
+                ) && is_side_effectful(old)
+                {
+                    let e = st.take_acc();
+                    flush!();
+                    out.push(Stmt::ExprStmt(e));
+                }
+            }
             st.acc = Some(match op {
                 Operand::Reg(r) => st.read_reg(r),
                 other => literal_expr(&other),
             });
         }
         Kind::StoreAcc(r) => {
-            let e = st.take_acc();
+            // panda 的 sta 不清空累加器（后续 TDZ 守卫等仍依赖它）
+            let e = st.acc.clone().unwrap_or(Expr::Undefined);
             st.write_reg(r, e);
         }
         Kind::AluAcc2(op) => {
@@ -693,7 +887,15 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
             st.acc = Some(Expr::Prop(Box::new(base), name, false));
         }
         Kind::StoreProp(name) => {
-            let obj = st.read_reg(0);
+            // 该版本 ark_disasm 显式输出对象寄存器（最后一个 Reg 操作数），
+            // 旧版省略时退回隐式对象寄存器
+            let obj_key = insn
+                .operands
+                .iter()
+                .filter_map(|o| o.reg_key())
+                .last()
+                .unwrap_or(env.this_key);
+            let obj = if obj_key == u16::MAX { Expr::Undefined } else { st.read_reg(obj_key) };
             let val = st.take_acc();
             flush!();
             out.push(Stmt::Assign {
@@ -732,6 +934,191 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
                 other => literal_expr(&other),
             };
             st.acc = Some(Expr::Index(Box::new(base), Box::new(idx)));
+        }
+        // 私有属性读：对象为操作数中的寄存器（缺省隐式对象寄存器）
+        Kind::LoadPrivateProp => {
+            let name = insn
+                .operands
+                .iter()
+                .find_map(|o| o.as_str())
+                .unwrap_or("<unknown>")
+                .to_string();
+            let obj = insn
+                .operands
+                .iter()
+                .find_map(|o| o.reg_key())
+                .unwrap_or(env.this_key);
+            let obj = if obj == u16::MAX { Expr::Undefined } else { st.read_reg(obj) };
+            st.acc = Some(Expr::Prop(Box::new(obj), name, false));
+        }
+        Kind::StorePrivateProp(name) => {
+            let obj_key = insn
+                .operands
+                .iter()
+                .find_map(|o| o.reg_key())
+                .unwrap_or(env.this_key);
+            let obj = if obj_key == u16::MAX { Expr::Undefined } else { st.read_reg(obj_key) };
+            let val = st.take_acc();
+            flush!();
+            out.push(Stmt::Assign {
+                lhs: Expr::Prop(Box::new(obj), name, false),
+                expr: val,
+            });
+            return StepResult::Normal;
+        }
+        Kind::DefineProperty(name) => {
+            let obj = if env.this_key == u16::MAX { Expr::Undefined } else { st.read_reg(env.this_key) };
+            let val = st.take_acc();
+            flush!();
+            out.push(Stmt::Assign {
+                lhs: Expr::Prop(Box::new(obj), name.clone(), false),
+                expr: val,
+            });
+            out.push(Stmt::Comment(format!("属性定义：{name}")));
+            return StepResult::Normal;
+        }
+        Kind::DefineGetterSetter => {
+            let regs: Vec<u16> = insn.operands.iter().filter_map(|o| o.reg_key()).collect();
+            let name = insn
+                .operands
+                .iter()
+                .find_map(|o| o.as_str())
+                .map(|s| Expr::Str(s.to_string()))
+                .unwrap_or_else(|| st.take_acc());
+            let mut args: Vec<Expr> = vec![st.read_reg(0)];
+            args.push(name);
+            for r in &regs {
+                args.push(st.read_reg(*r));
+            }
+            flush!();
+            out.push(Stmt::ExprStmt(Expr::Call {
+                callee: Box::new(Expr::Prop(
+                    Box::new(Expr::Ident("Object".into())),
+                    "defineProperty".into(),
+                    false,
+                )),
+                args,
+                optional: false,
+            }));
+            return StepResult::Normal;
+        }
+        Kind::CopyDataProperties => {
+            let regs: Vec<u16> = insn.operands.iter().filter_map(|o| o.reg_key()).collect();
+            let args: Vec<Expr> = regs.iter().map(|r| st.read_reg(*r)).collect();
+            flush!();
+            out.push(Stmt::ExprStmt(Expr::Call {
+                callee: Box::new(Expr::Prop(
+                    Box::new(Expr::Ident("Object".into())),
+                    "assign".into(),
+                    false,
+                )),
+                args,
+                optional: false,
+            }));
+            return StepResult::Normal;
+        }
+        Kind::SpreadArr => {
+            st.acc = Some(Expr::Unknown("数组展开 ...".into()));
+            flush!();
+            out.push(Stmt::Comment("spreadarr：数组展开占位".into()));
+            return StepResult::Normal;
+        }
+        Kind::DynamicImport => {
+            let arg = insn
+                .operands
+                .iter()
+                .find_map(|o| o.reg_key())
+                .map(|r| st.read_reg(r))
+                .or_else(|| insn.operands.iter().find_map(|o| o.as_str()).map(|s| Expr::Str(s.to_string())))
+                .unwrap_or(Expr::Undefined);
+            st.acc = Some(Expr::Call {
+                callee: Box::new(Expr::Ident("import".into())),
+                args: vec![arg],
+                optional: false,
+            });
+        }
+        Kind::InstanceOf => {
+            let class_ref = insn
+                .operands
+                .first()
+                .and_then(|o| o.as_imm())
+                .and_then(|id| env.names.get(id))
+                .map(|n| Expr::ClassRef(safe_ident(n)))
+                .unwrap_or_else(|| {
+                    insn.operands
+                        .iter()
+                        .find_map(|o| o.reg_key())
+                        .map(|r| st.read_reg(r))
+                        .unwrap_or(Expr::Unknown("类引用".into()))
+                });
+            let obj = insn
+                .operands
+                .iter()
+                .find_map(|o| o.reg_key())
+                .map(|r| st.read_reg(r))
+                .unwrap_or_else(|| st.take_acc());
+            st.acc = Some(Expr::Instanceof(Box::new(obj), Box::new(class_ref)));
+        }
+        Kind::ThrowFixed(msg) => {
+            flush!();
+            out.push(Stmt::Throw(Expr::Str(msg)));
+            return StepResult::Terminal;
+        }
+        Kind::LoadBigint(id) => {
+            let hint = format!("BigInt 字面量 #{}", id);
+            st.acc = Some(Expr::Unknown(hint.clone()));
+            flush!();
+            out.push(Stmt::Comment(hint));
+            return StepResult::Normal;
+        }
+        // TDZ 检查：累加器为空洞时抛引用错误（累加器不消耗）
+        Kind::ThrowUndefinedIfHole(name) => {
+            if let Some(acc) = st.acc.clone() {
+                let cond = Expr::Un {
+                    op: UnOp::Not,
+                    e: Box::new(acc),
+                };
+                let throw = Stmt::Throw(Expr::Str(format!("{name} 未初始化")));
+                out.push(Stmt::If { cond, then: vec![throw], els: None });
+            }
+        }
+        Kind::CheckSuper => {
+            out.push(Stmt::Comment("super 调用前校验".into()));
+        }
+        Kind::ResumeMode => {
+            st.acc = Some(Expr::Ident("__resume_mode".into()));
+        }
+        Kind::AsyncResolve(reg) => {
+            flush_side_effects(st, out);
+            let e = match reg {
+                Some(r) => st.read_reg(r),
+                None => st.take_acc(),
+            };
+            flush!();
+            out.push(Stmt::Return(Some(e)));
+            return StepResult::Terminal;
+        }
+        Kind::AsyncReject(reg) => {
+            flush_side_effects(st, out);
+            let e = match reg {
+                Some(r) => st.read_reg(r),
+                None => st.take_acc(),
+            };
+            flush!();
+            out.push(Stmt::Throw(e));
+            return StepResult::Terminal;
+        }
+        Kind::DefineFunc => {
+            // 方法引用形如 `&@pkg.a&1.0.9.#123#e2:(any,...)`，取末段短名
+            let short = ref_short_name(&pline.raw);
+            st.acc = Some(Expr::Ident(safe_member_name(&short)));
+        }
+        Kind::TypeOf => {
+            let e = operand_expr(st, insn.operands.first());
+            st.acc = Some(Expr::Un { op: UnOp::Typeof, e: Box::new(e) });
+        }
+        Kind::CopyRestArgs => {
+            st.acc = Some(Expr::Unknown("剩余参数 ...rest".into()));
         }
         Kind::LoadGlobal(name) => {
             st.acc = Some(global_expr(&name));
@@ -806,9 +1193,11 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
             return StepResult::Normal;
         }
         Kind::DefineClass(name) => {
-            st.acc = Some(Expr::ClassRef(safe_ident(&name)));
+            // 字面量缓冲里首段 `string:"类名"` 更可靠；退回分类阶段提取的文本
+            let cleaned = buffer_class_name(&pline.raw).unwrap_or_else(|| name.clone());
+            st.acc = Some(Expr::ClassRef(safe_ident(&cleaned)));
             flush!();
-            out.push(Stmt::Comment(format!("定义类 {name}")));
+            out.push(Stmt::Comment(format!("定义类 {cleaned}")));
             return StepResult::Normal;
         }
         Kind::LexNew(n) => {
@@ -878,7 +1267,7 @@ fn collect_args(st: &mut Interp, insn: &instr::Insn, shape: instr::CallShape) ->
         CallMode::Fixed(_n) => {
             let regs: Vec<u16> = insn.operands[1.min(insn.operands.len())..]
                 .iter()
-                .filter_map(|o| o.as_reg())
+                .filter_map(|o| o.reg_key())
                 .collect();
             let args: &[u16] = if shape.has_this && !regs.is_empty() {
                 &regs[1..]
@@ -894,7 +1283,7 @@ fn collect_args(st: &mut Interp, insn: &instr::Insn, shape: instr::CallShape) ->
                 .and_then(|o| o.as_imm())
                 .unwrap_or(0)
                 .max(0) as usize;
-            let first = insn.operands.get(2).and_then(|o| o.as_reg()).unwrap_or(0);
+            let first = insn.operands.get(2).and_then(|o| o.reg_key()).unwrap_or(0);
             (first..first.saturating_add(argc as u16))
                 .map(|r| st.read_reg(r))
                 .collect()
@@ -919,6 +1308,34 @@ fn is_plain_ident(s: &str) -> bool {
         && s.chars().enumerate().all(|(i, c)| {
             c == '$' || c == '_' || c.is_ascii_alphabetic() || (i > 0 && c.is_ascii_digit())
         })
+}
+
+/// 从 defineclasswithbuffer 的原始行提取类名：首段 `string:"X"`。
+fn buffer_class_name(raw: &str) -> Option<String> {
+    let key = "string:\"";
+    let start = raw.find(key)? + key.len();
+    let end = raw[start..].find('"')? + start;
+    if end > start {
+        Some(raw[start..end].to_string())
+    } else {
+        None
+    }
+}
+
+/// 从方法引用（definefunc / definemethod 操作数）提取短名。
+///
+/// `&@pkg.a&1.0.9.#123#e2:(any,...)` → `e2`；
+/// `&@pkg.a&1.0.9.static_initializer:(...)` → `static_initializer`。
+fn ref_short_name(raw: &str) -> String {
+    // 引用 token 含 '('（参数列表），先定位它
+    let tok = raw
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .find(|t| t.contains('('))
+        .unwrap_or(raw);
+    let head = tok.split('(').next().unwrap_or(tok);
+    let seg = head.rsplit('#').find(|s| !s.is_empty()).unwrap_or(head);
+    let seg = seg.trim_start_matches(['&', '@']);
+    seg.trim_end_matches(':').to_string()
 }
 
 /// 全局变量表达式（非法标识符退化为 globalThis["..."]）。
@@ -988,6 +1405,13 @@ pub fn render_stmts(stmts: &[Stmt], depth: usize, out: &mut String) {
             Stmt::While { cond, body } => {
                 out.push_str(&format!("{pad}while ({}) {{\n", render_expr(cond, 1)));
                 render_stmts(body, depth + 1, out);
+                out.push_str(&format!("{pad}}}\n"));
+            }
+            Stmt::TryCatch { body, catch } => {
+                out.push_str(&format!("{pad}try {{\n"));
+                render_stmts(body, depth + 1, out);
+                out.push_str(&format!("{pad}}} catch (e) {{\n"));
+                render_stmts(catch, depth + 1, out);
                 out.push_str(&format!("{pad}}}\n"));
             }
             Stmt::Comment(text) => out.push_str(&format!("{pad}// {text}\n")),

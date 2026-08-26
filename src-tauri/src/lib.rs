@@ -7,8 +7,8 @@
 //! - [`close_project`]：关闭当前项目；
 //! - [`set_disassembler_path`]：配置官方 `ark_disasm` 路径。
 
-mod decompiler;
-mod pa;
+pub mod decompiler;
+pub mod pa;
 mod project;
 mod runner;
 

@@ -9,8 +9,10 @@ use std::collections::HashMap;
 /// 指令操作数。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Operand {
-    /// 寄存器 `vN`。
+    /// 局部寄存器 `vN`。
     Reg(u16),
+    /// 参数寄存器 `aN`（pandasm 中方法实参使用独立的 a 寄存器组）。
+    Arg(u16),
     /// 整数立即数（十进制 / 十六进制）。
     Imm(i64),
     /// 浮点立即数。
@@ -27,11 +29,16 @@ pub enum Operand {
     Undefined,
 }
 
+/// 参数寄存器在内部寄存器键空间中的偏移（与 vN 键空间隔离）。
+pub const ARG_BASE: u16 = 1000;
+
 impl Operand {
-    /// 寄存器编号；非寄存器操作数返回 `None`。
-    pub fn as_reg(&self) -> Option<u16> {
+    /// 内部寄存器键：vN 直接映射，aN 映射到 [`ARG_BASE`] 之上，
+    /// 使两类寄存器共用同一状态表。
+    pub fn reg_key(&self) -> Option<u16> {
         match self {
             Operand::Reg(r) => Some(*r),
+            Operand::Arg(a) => Some(ARG_BASE + a),
             _ => None,
         }
     }
@@ -152,6 +159,14 @@ pub fn parse_operand(tok: &str) -> Operand {
         if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
             if let Ok(n) = rest.parse::<u16>() {
                 return Operand::Reg(n);
+            }
+        }
+    }
+    // 参数寄存器 aN
+    if let Some(rest) = tok.strip_prefix('a') {
+        if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
+            if let Ok(n) = rest.parse::<u16>() {
+                return Operand::Arg(n);
             }
         }
     }
@@ -446,13 +461,13 @@ pub fn decode_cmp_set(op: &str) -> Option<Cmp> {
     let base = op.split('.').next().unwrap_or(op);
     match base {
         "eq" => Some(Cmp::Eq),
-        "not_eq" | "ne" => Some(Cmp::Ne),
-        "lt" => Some(Cmp::Lt),
-        "le" => Some(Cmp::Le),
-        "gt" => Some(Cmp::Gt),
-        "ge" => Some(Cmp::Ge),
-        "strict_eq" | "steq" => Some(Cmp::StrictEq),
-        "strict_not_eq" | "stnoteq" => Some(Cmp::StrictNe),
+        "not_eq" | "noteq" | "ne" => Some(Cmp::Ne),
+        "lt" | "less" | "lessthan" => Some(Cmp::Lt),
+        "le" | "lesseq" | "lessequal" => Some(Cmp::Le),
+        "gt" | "greater" | "greaterthan" => Some(Cmp::Gt),
+        "ge" | "greatereq" | "greaterequal" => Some(Cmp::Ge),
+        "strict_eq" | "stricteq" | "steq" => Some(Cmp::StrictEq),
+        "strict_not_eq" | "strictnoteq" | "stnoteq" => Some(Cmp::StrictNe),
         _ => None,
     }
 }
@@ -502,6 +517,15 @@ pub fn decode_call(op: &str) -> Option<CallShape> {
             return Some(CallShape { has_this: false, mode: CallMode::Fixed(n) });
         }
     }
+    // callargsN / callthisargsN 旧式命名
+    if let Some(rest) = base.strip_prefix("args") {
+        if rest.is_empty() {
+            return Some(CallShape { has_this: false, mode: CallMode::Range });
+        }
+        if let Ok(n) = rest.parse::<usize>() {
+            return Some(CallShape { has_this: false, mode: CallMode::Fixed(n) });
+        }
+    }
     if let Ok(n) = base.parse::<usize>() {
         return Some(CallShape { has_this: false, mode: CallMode::Fixed(n) });
     }
@@ -511,6 +535,10 @@ pub fn decode_call(op: &str) -> Option<CallShape> {
     }
     if base == "thisargs" {
         return Some(CallShape { has_this: true, mode: CallMode::Range });
+    }
+    // 展开调用：参数为单个数组
+    if base == "spread" {
+        return Some(CallShape { has_this: false, mode: CallMode::Fixed(1) });
     }
     None
 }
@@ -551,6 +579,42 @@ pub enum Kind {
     LoadProp { super_: bool },
     /// 属性写：v0.name = acc。
     StoreProp(String),
+    /// 私有属性读：acc = obj.name（对象为操作数中的寄存器，缺省 v0）。
+    LoadPrivateProp,
+    /// 私有属性写：obj.name = acc。
+    StorePrivateProp(String),
+    /// 属性定义：v0.name = acc（definepropertybyname）。
+    DefineProperty(String),
+    /// 访问器定义：Object.defineProperty(v0, name, { get, set })。
+    DefineGetterSetter,
+    /// 数据属性复制：Object.assign(target, source)。
+    CopyDataProperties,
+    /// 数组展开（spread 调用的组成部分），无法完整表达。
+    SpreadArr,
+    /// 动态导入：import(module)。
+    DynamicImport,
+    /// instanceof 检查：acc = obj instanceof class。
+    InstanceOf,
+    /// 受控抛出：抛出固定语义值（非累加器）。
+    ThrowFixed(String),
+    /// 条件抛出：累加器为空洞值时按名称抛引用错误（非消耗性）。
+    ThrowUndefinedIfHole(String),
+    /// super 调用前校验（失败即抛错），还原为注释。
+    CheckSuper,
+    /// 读取异步状态机恢复模式。
+    ResumeMode,
+    /// 异步完成：以指定寄存器值作为方法结果返回。
+    AsyncResolve(Option<u16>),
+    /// 异步异常完成：以指定寄存器值抛出并终止。
+    AsyncReject(Option<u16>),
+    /// 方法定义（definefunc / definemethod）：acc = 函数引用。
+    DefineFunc,
+    /// typeof 一元运算。
+    TypeOf,
+    /// 剩余参数收集（copyrestargs）。
+    CopyRestArgs,
+    /// BigInt 字面量加载（池中数值不可静态还原时降级占位）。
+    LoadBigint(i64),
     /// super 属性写：super.name = acc。
     StoreSuperProp(String),
     /// 下标写：v0[idx] = acc，idx 为寄存器或立即数。
@@ -614,12 +678,12 @@ pub fn classify(insn: &Insn) -> Kind {
 
     // mov 家族
     if base == "mov" {
-        if let (Some(d), Some(s)) = (o.first().and_then(|x| x.as_reg()), o.get(1).and_then(|x| x.as_reg())) {
+        if let (Some(d), Some(s)) = (o.first().and_then(|x| x.reg_key()), o.get(1).and_then(|x| x.reg_key())) {
             return Move(d, s);
         }
     }
     if op.starts_with("movi") {
-        if let (Some(d), Some(i)) = (o.first().and_then(|x| x.as_reg()), o.get(1).and_then(|x| x.as_imm())) {
+        if let (Some(d), Some(i)) = (o.first().and_then(|x| x.reg_key()), o.get(1).and_then(|x| x.as_imm())) {
             return MoveImm(d, i);
         }
     }
@@ -628,14 +692,14 @@ pub fn classify(insn: &Insn) -> Kind {
     match base {
         "lda" => return LoadAcc(o.first().cloned().unwrap_or(Operand::Undefined)),
         "ldai" | "fldai" => return LoadAcc(o.first().cloned().unwrap_or(Operand::Undefined)),
-        "ldanull" | "ldnull" => return LoadAcc(Operand::Null),
+        "ldanull" | "ldnull" | "ldhole" => return LoadAcc(Operand::Null),
         "ldundefined" => return LoadAcc(Operand::Undefined),
         "ldtrue" => return LoadAcc(Operand::Bool(true)),
         "ldfalse" => return LoadAcc(Operand::Bool(false)),
         "ldnan" => return LoadAcc(Operand::Float(f64::NAN)),
         "ldinfinity" => return LoadAcc(Operand::Float(f64::INFINITY)),
         "sta" => {
-            if let Some(d) = o.first().and_then(|x| x.as_reg()) {
+            if let Some(d) = o.first().and_then(|x| x.reg_key()) {
                 return StoreAcc(d);
             }
         }
@@ -648,7 +712,7 @@ pub fn classify(insn: &Insn) -> Kind {
             AluForm::Acc2 => AluAcc2(alu),
             AluForm::UnaryToAcc => AluUnary(alu),
             AluForm::InPlace => {
-                if let (Some(r), Some(i)) = (o.first().and_then(|x| x.as_reg()), o.get(1).and_then(|x| x.as_imm())) {
+                if let (Some(r), Some(i)) = (o.first().and_then(|x| x.reg_key()), o.get(1).and_then(|x| x.as_imm())) {
                     AluInPlace(match alu {
                         AluOp::Add | AluOp::Sub => alu,
                         other => other,
@@ -694,6 +758,65 @@ pub fn classify(insn: &Insn) -> Kind {
             return StoreSuperProp(name.to_string());
         }
         return Other;
+    }
+    // 私有属性（混淆产物）：操作数含对象寄存器与名称字符串
+    if op.starts_with("ldprivateproperty") {
+        return LoadPrivateProp;
+    }
+    if op.starts_with("stprivateproperty") {
+        if let Some(name) = o.iter().find_map(|x| x.as_str()) {
+            return StorePrivateProp(name.to_string());
+        }
+        return Other;
+    }
+    // 属性 / 访问器定义
+    if op.starts_with("definepropertybyname") {
+        if let Some(name) = o.iter().find_map(|x| x.as_str()) {
+            return DefineProperty(name.to_string());
+        }
+        return Other;
+    }
+    if op.starts_with("definegettersetterbyvalue") {
+        return DefineGetterSetter;
+    }
+    // 数据属性复制与数组展开
+    if op.starts_with("copydataproperties") {
+        return CopyDataProperties;
+    }
+    if op.starts_with("spreadarr") {
+        return SpreadArr;
+    }
+    // 动态导入
+    if op.starts_with("dynamicimport") {
+        return DynamicImport;
+    }
+    // instanceof 检查
+    if op.starts_with("isinstanceof") || op.starts_with("checkisinstanceof") || base == "instanceof" {
+        return InstanceOf;
+    }
+    // 方法定义：操作数含方法引用字符串
+    if op.starts_with("definefunc") || op.starts_with("definemethod") {
+        return DefineFunc;
+    }
+    // typeof / 剩余参数
+    if base == "typeof" {
+        return TypeOf;
+    }
+    if op.starts_with("copyrestargs") {
+        return CopyRestArgs;
+    }
+    // 异步状态机
+    if op.starts_with("getresumemode") {
+        return ResumeMode;
+    }
+    if op.starts_with("asyncfunctionawaituncaught") || op.starts_with("asyncfunctionawaitresult") {
+        return Await;
+    }
+    if op.starts_with("asyncfunctionresolve") {
+        return AsyncResolve(o.first().and_then(|x| x.reg_key()));
+    }
+    if op.starts_with("asyncfunctionreject") {
+        return AsyncReject(o.first().and_then(|x| x.reg_key()));
     }
     if op.starts_with("ldobjbyvalue") {
         if let Some(idx) = o.first() {
@@ -769,6 +892,13 @@ pub fn classify(insn: &Insn) -> Kind {
     if base == "strconcat" {
         return AluAcc2(AluOp::Add);
     }
+    // 布尔化：isfalse 取反累加器真值；istrue / tonumeric 保持累加器语义
+    if op == "isfalse" {
+        return AluUnary(AluOp::Not);
+    }
+    if op == "istrue" || op.starts_with("tonumeric") || op.starts_with("tonumber") {
+        return Nop;
+    }
 
     // 调用
     let is_super = op.starts_with("supercall");
@@ -780,7 +910,7 @@ pub fn classify(insn: &Insn) -> Kind {
     if op.starts_with("newobjrange") {
         let class = class_name_of(o.first());
         let argc = o.get(1).and_then(|x| x.as_imm()).unwrap_or(0).max(0) as usize;
-        let first = o.get(2).and_then(|x| x.as_reg());
+        let first = o.get(2).and_then(|x| x.reg_key());
         return NewObj { class, argc, first };
     }
     if op.starts_with("newobj") {
@@ -829,8 +959,28 @@ pub fn classify(insn: &Insn) -> Kind {
     }
 
     // 控制流终止
+    // 条件抛出 / super 校验（必须先于下方 base=="throw" 判断：
+    // 这些操作码的主干同为 throw）
+    if op.starts_with("throw.undefinedifholewithname") || base == "throwundefinedifholewithname" {
+        let name = o
+            .iter()
+            .find_map(|x| x.as_str())
+            .unwrap_or("<unknown>")
+            .to_string();
+        return ThrowUndefinedIfHole(name);
+    }
+    if op.starts_with("throw.ifsupernotcorrectcall") {
+        return CheckSuper;
+    }
     if base == "throw" {
         return Throw;
+    }
+    // 受控抛出：抛出固定语义值
+    if base == "throwconstpatternnotmatch" {
+        return ThrowFixed("常量模式不匹配".into());
+    }
+    if base == "throwundefinedifhole" {
+        return ThrowFixed("undefined（空洞值）".into());
     }
     if base == "return" {
         return Ret(RetKind::Value);
@@ -863,8 +1013,13 @@ pub fn classify(insn: &Insn) -> Kind {
     }
 
     // 无语义影响的指令（debugger 语句等）
-    if op == "nop" || op == "debugger" || op == "setrequiredmemory" {
+    if op == "nop" || op == "debugger" || op == "setrequiredmemory" || op == "waitforfinish" {
         return Nop;
+    }
+    // BigInt 字面量（数值存于字面量池，静态不可还原时占位）
+    if op.starts_with("ldbigint") {
+        let id = o.first().and_then(|x| x.as_imm()).unwrap_or(0);
+        return LoadBigint(id);
     }
     Other
 }
@@ -1039,17 +1194,23 @@ mod tests {
         "definefieldbyname", "getpropbyname", "ldsuperbyname",
         "stsuperbyname", "ldobjbyvalue", "stobjbyvalue",
         "stownbyvalue", "ldobjbyindex", "stobjbyindex", "stownbyindex",
+        // 私有属性 / 属性定义 / 数据复制
+        "ldprivateproperty", "stprivateproperty", "definepropertybyname",
+        "copydataproperties",
         // 全局 / 模块
         "ldglobalvar", "stglobalvar", "tryldglobalbyname",
         "trystglobalbyname", "tryldglobalvalue",
         "ldmodulevar", "stmodulevar", "ldexternalmodulevar",
         "ldlocalmodulevar", "tryldmodulevar",
         "getmodulenamespace", "tryldmodulenamespace", "stmodulenamespace",
-        // 调用
+        // 调用与导入
         "callarg0", "callarg1", "callarg2", "callarg3",
         "callthis0", "callthis1", "callthis2", "callthis3",
         "callrange", "callthisrange",
         "supercallarg0", "supercallrange", "supercallthisrange",
+        "dynamicimport",
+        // 类型检查
+        "isinstanceofimm", "checkisinstanceofbyid",
         // 对象 / 类
         "newobj", "newobjrange", "createemptyobject", "createemptyarray",
         "createarraywithbuffer", "createobjectwithbuffer",
@@ -1058,32 +1219,34 @@ mod tests {
         "newlexenv", "newlexenvwithscope", "poplexenv", "stlexvar", "ldlexvar",
         // 控制流终止 / 异常
         "throw", "return", "return.64", "returnundefined", "returnobject",
+        "throwconstpatternnotmatch", "throwundefinedifhole",
+        "throw.undefinedifholewithname", "throw.ifsupernotcorrectcall",
+        // 布尔化 / 数值化 / 类型
+        "isfalse", "istrue", "tonumeric", "typeof",
+        "less", "greater", "greatereq", "noteq",
+        "stricteq", "strictnoteq",
+        // 方法定义与展开调用
+        "definefunc", "definemethod", "copyrestargs",
+        "callargs2", "supercallspread", "instanceof",
         // 异步
-        "asyncfunctionenter", "asyncfunctionreject", "asyncfunctionresolve",
-        "asyncfunctionexit", "suspendgenerator", "resumegenerator",
-        "awaitresult", "awaitshort", "awaitcompletion",
+        "asyncfunctionenter", "asyncfunctionexit", "suspendgenerator",
+        "resumegenerator", "awaitresult", "awaitshort", "awaitcompletion",
+        // 异步状态机
+        "ldhole", "getresumemode", "asyncfunctionawaituncaught",
+        "asyncfunctionresolve", "asyncfunctionreject",
         // 其他
-        "nop", "debugger", "setrequiredmemory",
+        "nop", "debugger", "setrequiredmemory", "waitforfinish",
         "wide.mov", "wide.ldobjbyindex",
     ];
 
-    /// 尚未还原、落入原始汇编兜底的指令清单（按类别分组，供后续迭代）。
-    const UNHANDLED: &[&str] = &[
-        // 私有属性（混淆产物）
-        "ldprivateproperty", "stprivateproperty",
-        // getter/setter 定义
-        "definepropertybyname", "definegettersetterbyvalue",
-        // 数据展开 / 属性复制
-        "copydataproperties", "spreadarr",
-        // 动态导入
-        "dynamicimport",
-        // 类型检查
-        "isinstanceofimm", "checkisinstanceofbyid",
-        // 受控抛出
-        "throwconstpatternnotmatch", "throwundefinedifhole",
-        // BigInt 与杂项
-        "ldbigint", "waitforfinish",
+    /// 近似还原的指令：有语义表达但细节（池中数值 / 精确操作数序）不可静态确定。
+    const APPROXIMATED: &[&str] = &[
+        "definegettersetterbyvalue", "spreadarr", "ldbigint",
     ];
+
+    /// 尚未还原、落入原始汇编兜底的指令清单。
+    /// 当前为空；新增无法分类的指令时应补充到这里并跟进实现。
+    const UNHANDLED: &[&str] = &[];
 
     #[test]
     fn coverage_report_handled_vs_unhandled() {
@@ -1107,6 +1270,8 @@ mod tests {
                 || bare.starts_with("stobjbynamelazybuiltin")
                 || bare.starts_with("stownbynamelazybuiltin")
                 || bare.starts_with("definefieldbyname")
+                || bare.starts_with("definepropertybyname")
+                || bare.starts_with("stprivateproperty")
                 || bare.starts_with("stsuperbyname")
             {
                 "0x0, \"prop\"".to_string()
@@ -1115,6 +1280,10 @@ mod tests {
                 || bare.starts_with("stownbyvalue")
             {
                 "v2".to_string()
+            } else if bare.starts_with("throw.undefinedifholewithname") {
+                "\"m\"".to_string()
+            } else if bare.starts_with("definefunc") || bare.starts_with("definemethod") {
+                "0x0, M1:(any), 0x4".to_string()
             } else if bare.starts_with("ldglobalvar")
                 || bare.starts_with("tryldglobal")
                 || bare.starts_with("trystglobal")
@@ -1134,6 +1303,13 @@ mod tests {
                 panic!("指令 {name} 预期已还原，但分类为 Other");
             }
         }
+        for name in APPROXIMATED {
+            let insn = parse_line(&format!("\t{} {}\n", name, args_of(name)));
+            assert!(
+                !matches!(classify(insn_of(&insn)), Kind::Other),
+                "近似还原指令 {name} 不应落入 Other"
+            );
+        }
         for name in UNHANDLED {
             let insn = parse_line(&format!("\t{} {}\n", name, args_of(name)));
             assert!(
@@ -1141,8 +1317,11 @@ mod tests {
                 "指令 {name} 预期未还原，但已被分类"
             );
         }
+        let total = HANDLED.len() + APPROXIMATED.len();
         report.push_str(&format!("已还原: {} 条\n", HANDLED.len()));
+        report.push_str(&format!("近似还原: {} 条\n", APPROXIMATED.len()));
         report.push_str(&format!("未还原(兜底): {} 条\n", UNHANDLED.len()));
+        report.push_str(&format!("合计: {} 条\n", total));
         println!("{report}");
     }
 }

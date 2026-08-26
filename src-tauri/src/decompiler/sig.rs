@@ -25,6 +25,8 @@ pub struct Sig {
 }
 
 /// 去除工具链混淆产生的名字前缀（如 `#*#main` → `main`）。
+///
+/// 形如 `#123456789#e2` 的混淆名取末段真实短名 `e2`。
 pub fn clean_name(name: &str) -> String {
     let mut n = name.trim().to_string();
     loop {
@@ -36,6 +38,12 @@ pub fn clean_name(name: &str) -> String {
             break;
         }
         n = stripped.to_string();
+    }
+    // 内层 hash 分隔：取最后一个非空段
+    if n.contains('#') {
+        if let Some(seg) = n.rsplit('#').find(|s| !s.is_empty()) {
+            n = seg.to_string();
+        }
     }
     if n.is_empty() {
         "<anonymous>".to_string()
@@ -64,7 +72,10 @@ pub fn parse(signature: &str) -> Sig {
         Some(pos) if text.ends_with('>') => (&text[..pos], &text[pos + 1..text.len() - 1]),
         _ => (text, ""),
     };
-    let is_static = meta.split(',').any(|f| f.trim().starts_with("static true"));
+    let is_static = meta.split(',').any(|f| {
+        let f = f.trim();
+        f == "static" || f.starts_with("static true")
+    });
     let is_async_hint = meta.contains("async");
 
     // 参数列表（第一个 '(' 与最后一个 ')' 之间）
@@ -119,6 +130,15 @@ impl Sig {
     pub fn is_module_main(&self) -> bool {
         matches!(self.name.as_str(), "funcmain" | "func_main" | "main")
             && self.owner.is_empty()
+    }
+
+    /// 是否工具链合成的初始化方法（模块入口 / static_initializer）。
+    ///
+    /// 这类方法的寄存器是状态机槽位而非调用实参，还原时不绑定 this 与参数。
+    pub fn is_synthetic(&self) -> bool {
+        self.is_module_main()
+            || self.name.contains("static_initializer")
+            || self.name.starts_with("func_main")
     }
 
     /// 把 panda 类型名映射为 ArkTS 类型标注。
