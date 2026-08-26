@@ -4,8 +4,10 @@
  * 布局：顶部标题栏 + 左侧可拖宽的项目树面板 + 右侧多标签代码区。
  *
  * 职责：
- * - 通过原生对话框 / Ctrl+O / 拖拽打开 `.abc` / `.hap` 文件；
- * - 监听标题栏菜单派发的全局事件（打开文件 / 关闭项目 / 反编译器设置）；
+ * - 通过原生对话框 / Ctrl+O / 拖拽打开 `.abc` / `.hap` / `.hark` 文件；
+ * - 监听标题栏菜单派发的全局事件（打开文件 / 保存 / 另存为 / 关闭项目 / 反编译器设置）；
+ * - 「保存 / 另存为」把当前项目与工作区快照写入 `.hark` 二进制工作区文件，
+ *   打开 `.hark` 时校验完整性并恢复标签与视图现场；
  * - 管理编辑器标签（最多 12 个）并懒加载节点内容；
  * - 每个内容区提供 `.abc`（反汇编）/ `.ets`（ArkTS 还原）双视图，
  *   按需加载并缓存两份内容，支持把 `.ets` 导出为文件；
@@ -20,7 +22,7 @@ import TitleBar from "../TitleBar"
 import { Button, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, addToast } from "../ui/base-ui"
 import { usePersistentState } from "../../hooks/usePersistentState"
 import { cn } from "../../lib/utils"
-import { api, type NodeContent, type TreeNode, type ViewKind } from "../../lib/api"
+import { api, type NodeContent, type OpenProjectResult, type SavedWorkspace, type TreeNode, type ViewKind } from "../../lib/api"
 import { ProjectTree, type TreeCommand } from "./ProjectTree"
 import { EditorTabs, type EditorTab } from "./EditorTabs"
 import { CodeView } from "./CodeView"
@@ -29,10 +31,13 @@ import { ViewSwitcher } from "./ViewSwitcher"
 /** 原生打开对话框的文件类型过滤器。 */
 const FILE_FILTERS = [
   {
-    name: "Ark 字节码 / 应用包",
-    extensions: ["abc", "hap", "har", "app"],
+    name: "Ark 字节码 / 应用包 / 工作区",
+    extensions: ["abc", "hap", "har", "app", "hark"],
   },
 ]
+
+/** `.hark` 工作区文件的原生保存对话框过滤器。 */
+const HARK_FILTERS = [{ name: "abcde 工作区", extensions: ["hark"] }]
 
 /** 单个标签的完整状态：标签信息 + 双视图内容缓存。 */
 interface TabEntry {
@@ -57,6 +62,19 @@ const MAX_TABS = 12
 const VIEWABLE_KINDS = new Set<TreeNode["kind"]>(["class", "method", "abc", "root", "package"])
 
 /**
+ * 在项目树中按 ID 深度优先查找节点；不存在时返回 `null`。
+ * 用于恢复 `.hark` 会话时把快照中的节点 ID 映射回树节点。
+ */
+function findTreeNode(root: TreeNode, id: number): TreeNode | null {
+  if (root.id === id) return root
+  for (const child of root.children) {
+    const found = findTreeNode(child, id)
+    if (found) return found
+  }
+  return null
+}
+
+/**
  * 渲染整个工作台界面。
  *
  * 无项目时显示拖入提示与「打开文件 / 反编译器设置」入口；
@@ -77,6 +95,11 @@ export function Workspace() {
   tabsRef.current = tabs
   /** 激活标签的 key */
   const [activeKey, setActiveKey] = useState<string | undefined>()
+  /** 当前会话绑定的 `.hark` 工作区文件路径；`null` 表示尚未保存过 */
+  const [harkPath, setHarkPath] = useState<string | null>(null)
+  /** 激活标签 key 的最新快照（供回调同步读取） */
+  const activeKeyRef = useRef<string | undefined>(activeKey)
+  activeKeyRef.current = activeKey
   /** 侧栏宽度（持久化） */
   const [sidebarWidth, setSidebarWidth] = usePersistentState<number>("workspace-sidebar-width", 280)
   /** 侧栏是否收起（持久化，由标题栏左上角按钮切换） */
@@ -108,96 +131,7 @@ export function Workspace() {
   const collapseAll = () =>
     setTreeCommand({ type: "collapse-all", seq: ++treeCommandSeq.current })
 
-  // ---------- 打开文件 ----------
-
-  /**
-   * 打开指定路径的文件：调用后端反编译并重建项目树。
-   * 成功后清空所有标签；失败时以 toast 展示错误。
-   * @param path 文件绝对路径
-   */
-  const openFile = useCallback(async (path: string) => {
-    setBusyMessage(`正在反编译 ${path.split(/[\\/]/).pop()} …`)
-    try {
-      const t = await api.openProject(path)
-      setTree(t)
-      setProjectName(t.name)
-      setTabs([])
-      setActiveKey(undefined)
-      // 同步一次工具路径，便于后端立即校验/缓存
-      void api.setDisassemblerPath(toolPathRef.current.trim() || null)
-    } catch (e) {
-      addToast({ title: "打开失败", description: String(e), severity: "danger" })
-    } finally {
-      setBusyMessage(null)
-    }
-  }, [])
-
-  /** 弹出原生文件选择框并打开选中的文件。 */
-  const pickAndOpen = useCallback(async () => {
-    const selected = await openFileDialog({
-      multiple: false,
-      directory: false,
-      filters: FILE_FILTERS,
-    })
-    if (typeof selected === "string") await openFile(selected)
-  }, [openFile])
-
-  // ---------- 全局事件 ----------
-
-  useEffect(() => {
-    /** 标题栏「文件 → 打开文件…」 */
-    const onOpenFile = () => void pickAndOpen()
-    /** 标题栏「文件 → 关闭项目」 */
-    const onCloseProject = () => {
-      setTree(null)
-      setProjectName(null)
-      setTabs([])
-      setActiveKey(undefined)
-      void api.closeProject()
-    }
-    /** 标题栏「文件 → 反编译器设置…」 */
-    const onConfigureTool = () => {
-      setToolPathDraft(toolPathRef.current)
-      setToolModalOpen(true)
-    }
-    window.addEventListener("abcde:open-file", onOpenFile)
-    window.addEventListener("abcde:close-project", onCloseProject)
-    window.addEventListener("abcde:configure-tool", onConfigureTool)
-    return () => {
-      window.removeEventListener("abcde:open-file", onOpenFile)
-      window.removeEventListener("abcde:close-project", onCloseProject)
-      window.removeEventListener("abcde:configure-tool", onConfigureTool)
-    }
-  }, [pickAndOpen])
-
-  // Ctrl+O / Cmd+O 快捷键打开文件
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") {
-        e.preventDefault()
-        void pickAndOpen()
-      }
-    }
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
-  }, [pickAndOpen])
-
-  // 拖拽文件进窗口直接打开（仅 Tauri 环境）
-  useEffect(() => {
-    if (!("__TAURI_INTERNALS__" in window)) return
-    let unlisten: (() => void) | undefined
-    void getCurrentWebview()
-      .onDragDropEvent(event => {
-        if (event.payload.type === "drop") {
-          const path = event.payload.paths[0]
-          if (path) void openFile(path)
-        }
-      })
-      .then(stop => (unlisten = stop))
-    return () => unlisten?.()
-  }, [openFile])
-
-  // ---------- 内容加载与视图切换 ----------
+  // ---------- 内容加载 ----------
 
   /**
    * 加载某个标签指定视图的内容（已缓存或加载中时跳过）。
@@ -233,6 +167,200 @@ export function Workspace() {
         ),
     )
   }, [])
+
+  // ---------- 打开文件 ----------
+
+  /**
+   * 打开指定路径的文件：调用后端反编译并重建项目树。
+   * 打开 `.hark` 工作区时按会话快照恢复标签顺序、视图与激活标签。
+   * 成功后重建标签列表；失败时以 toast 展示错误。
+   * @param path 文件绝对路径
+   */
+  const openFile = useCallback(async (path: string) => {
+    setBusyMessage(`正在打开 ${path.split(/[\\/]/).pop()} …`)
+    try {
+      const result: OpenProjectResult = await api.openProject(path)
+      const t = result.tree
+      setTree(t)
+      setProjectName(t.name)
+      // 仅当打开的确实是 `.hark` 文件时才绑定会话路径，后续「保存」直接覆写
+      const isHark = path.toLowerCase().endsWith(".hark")
+      setHarkPath(isHark ? path : null)
+
+      // 恢复 `.hark` 快照：按保存顺序重建标签并预加载各自视图
+      const ws = result.session?.workspace
+      if (isHark && ws && ws.tabs.length > 0) {
+        const restored: TabEntry[] = []
+        for (const saved of ws.tabs) {
+          const node = findTreeNode(t, saved.nodeId)
+          if (!node || restored.some(e => e.tab.nodeId === node.id)) continue
+          restored.push({
+            tab: { key: `node-${node.id}`, title: node.name, nodeId: node.id },
+            kind: node.kind,
+            view: saved.view === "ets" ? "ets" : "abc",
+            contents: {},
+            loading: {},
+            errors: {},
+          })
+        }
+        // 与手动打开一致：超过上限时保留最新的标签
+        const capped = restored.length > MAX_TABS ? restored.slice(restored.length - MAX_TABS) : restored
+        setTabs(capped)
+        for (const entry of capped) loadView(entry.tab.key, entry.tab.nodeId, entry.view)
+        const activeEntry =
+          ws.activeNodeId != null ? capped.find(e => e.tab.nodeId === ws.activeNodeId) : undefined
+        setActiveKey(activeEntry?.tab.key ?? capped[capped.length - 1]?.tab.key)
+      } else {
+        setTabs([])
+        setActiveKey(undefined)
+      }
+      // 同步一次工具路径，便于后端立即校验/缓存
+      void api.setDisassemblerPath(toolPathRef.current.trim() || null)
+    } catch (e) {
+      addToast({ title: "打开失败", description: String(e), severity: "danger" })
+    } finally {
+      setBusyMessage(null)
+    }
+  }, [loadView])
+
+  /** 弹出原生文件选择框并打开选中的文件。 */
+  const pickAndOpen = useCallback(async () => {
+    const selected = await openFileDialog({
+      multiple: false,
+      directory: false,
+      filters: FILE_FILTERS,
+    })
+    if (typeof selected === "string") await openFile(selected)
+  }, [openFile])
+
+  // ---------- 保存 / 另存为（.hark）----------
+
+  /** 从当前标签状态整理出待保存的工作区快照。 */
+  const buildWorkspaceSnapshot = useCallback((): SavedWorkspace => ({
+    tabs: tabsRef.current.map(e => ({ nodeId: e.tab.nodeId, view: e.view })),
+    activeNodeId:
+      activeKeyRef.current != null
+        ? tabsRef.current.find(e => e.tab.key === activeKeyRef.current)?.tab.nodeId ?? null
+        : null,
+  }), [])
+
+  /**
+   * 另存为新的 `.hark` 工作区文件。
+   * 弹出原生保存对话框（默认名为当前项目名），成功后绑定该路径。
+   */
+  const saveProjectAs = useCallback(async () => {
+    if (!tree) {
+      addToast({ title: "无法保存", description: "尚未打开项目", severity: "warning" })
+      return
+    }
+    const base = (projectName ?? "workspace").replace(/\.[^.]+$/, "") || "workspace"
+    const selected = await saveFileDialog({
+      defaultPath: `${base}.hark`,
+      filters: HARK_FILTERS,
+    })
+    if (typeof selected !== "string") return
+    try {
+      await api.saveProjectHark(selected, buildWorkspaceSnapshot())
+      setHarkPath(selected)
+      addToast({ title: "已另存为工作区", description: selected, severity: "success" })
+    } catch (e) {
+      addToast({ title: "保存失败", description: String(e), severity: "danger" })
+    }
+  }, [tree, projectName, buildWorkspaceSnapshot])
+
+  /**
+   * 保存到当前绑定的 `.hark` 文件；尚未绑定过时自动转入「另存为」流程。
+   */
+  const saveProject = useCallback(async () => {
+    if (!tree) {
+      addToast({ title: "无法保存", description: "尚未打开项目", severity: "warning" })
+      return
+    }
+    if (!harkPath) {
+      await saveProjectAs()
+      return
+    }
+    try {
+      await api.saveProjectHark(harkPath, buildWorkspaceSnapshot())
+      addToast({ title: "已保存工作区", description: harkPath, severity: "success" })
+    } catch (e) {
+      addToast({ title: "保存失败", description: String(e), severity: "danger" })
+    }
+  }, [tree, harkPath, saveProjectAs, buildWorkspaceSnapshot])
+
+  // ---------- 全局事件 ----------
+
+  useEffect(() => {
+    /** 标题栏「文件 → 打开文件…」 */
+    const onOpenFile = () => void pickAndOpen()
+    /** 标题栏「文件 → 关闭项目」 */
+    const onCloseProject = () => {
+      setTree(null)
+      setProjectName(null)
+      setTabs([])
+      setActiveKey(undefined)
+      setHarkPath(null)
+      void api.closeProject()
+    }
+    /** 标题栏「文件 → 保存」 */
+    const onSaveProject = () => void saveProject()
+    /** 标题栏「文件 → 另存为…」 */
+    const onSaveProjectAs = () => void saveProjectAs()
+    /** 标题栏「文件 → 反编译器设置…」 */
+    const onConfigureTool = () => {
+      setToolPathDraft(toolPathRef.current)
+      setToolModalOpen(true)
+    }
+    window.addEventListener("abcde:open-file", onOpenFile)
+    window.addEventListener("abcde:close-project", onCloseProject)
+    window.addEventListener("abcde:save-project", onSaveProject)
+    window.addEventListener("abcde:save-project-as", onSaveProjectAs)
+    window.addEventListener("abcde:configure-tool", onConfigureTool)
+    return () => {
+      window.removeEventListener("abcde:open-file", onOpenFile)
+      window.removeEventListener("abcde:close-project", onCloseProject)
+      window.removeEventListener("abcde:save-project", onSaveProject)
+      window.removeEventListener("abcde:save-project-as", onSaveProjectAs)
+      window.removeEventListener("abcde:configure-tool", onConfigureTool)
+    }
+  }, [pickAndOpen, saveProject, saveProjectAs])
+
+  // Ctrl+O 打开 / Ctrl+S 保存 / Ctrl+Shift+S 另存为
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      switch (e.key.toLowerCase()) {
+        case "o":
+          e.preventDefault()
+          void pickAndOpen()
+          break
+        case "s":
+          e.preventDefault()
+          if (e.shiftKey) void saveProjectAs()
+          else void saveProject()
+          break
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [pickAndOpen, saveProject, saveProjectAs])
+
+  // 拖拽文件进窗口直接打开（仅 Tauri 环境）
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return
+    let unlisten: (() => void) | undefined
+    void getCurrentWebview()
+      .onDragDropEvent(event => {
+        if (event.payload.type === "drop") {
+          const path = event.payload.paths[0]
+          if (path) void openFile(path)
+        }
+      })
+      .then(stop => (unlisten = stop))
+    return () => unlisten?.()
+  }, [openFile])
+
+  // ---------- 标签操作 ----------
 
   /**
    * 打开一个节点对应的标签（已存在时仅激活），并异步加载其内容。

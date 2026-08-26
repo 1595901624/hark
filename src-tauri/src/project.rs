@@ -104,8 +104,7 @@ pub struct Project {
     pub name: String,
     /// 文件扩展名小写形式（`abc` / `hap` / `har` ...）。
     pub kind: String,
-    /// 打开文件的绝对路径（保留供后续「资源文件预览」等功能使用）。
-    #[allow(dead_code)]
+    /// 打开文件的绝对路径（保存 `.hark` 工作区时引用；资源预览等也会用到）。
     pub source_path: PathBuf,
     /// 包含的全部 `.abc` 单元。
     units: Vec<AbcUnit>,

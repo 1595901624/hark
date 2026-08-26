@@ -1,13 +1,15 @@
 //! abcde 库入口：注册 Tauri 插件、共享状态与前端可调用的命令。
 //!
 //! 命令一览：
-//! - [`open_project`]：打开 `.abc` / `.hap` / `.har` 并返回项目树；
+//! - [`open_project`]：打开 `.abc` / `.hap` / `.har` / `.hark` 并返回项目树；
+//! - [`save_project_hark`]：把当前项目与工作区快照保存为 `.hark` 文件；
 //! - [`get_content`]：按节点 ID 获取内容切片（支持 abc / ets 双视图）；
 //! - [`export_node_ets`]：把节点的 ArkTS 还原结果导出为文件；
 //! - [`close_project`]：关闭当前项目；
 //! - [`set_disassembler_path`]：配置官方 `ark_disasm` 路径。
 
 pub mod decompiler;
+pub mod hark;
 pub mod pa;
 mod project;
 mod runner;
@@ -15,6 +17,7 @@ mod runner;
 use std::sync::Mutex;
 
 use project::{NodeContent, Project, TreeNode};
+use serde::Serialize;
 use tauri::State;
 
 /// 应用共享状态：当前项目 + 反编译工具路径配置。
@@ -35,26 +38,92 @@ impl AppState {
     }
 }
 
-/// 打开一个 `.abc` / `.hap` / `.har` 文件。
+/// [`open_project`] 的返回值：项目树 + 可选的 `.hark` 会话元数据。
+#[derive(Serialize)]
+struct OpenProjectResult {
+    /// 项目树根节点。
+    tree: TreeNode,
+    /// 打开 `.hark` 时解出的会话元数据（含工作区快照）；普通文件为 `None`。
+    session: Option<hark::HarkMeta>,
+}
+
+/// 打开一个 `.abc` / `.hap` / `.har` 文件，或 `.hark` 工作区文件。
 ///
-/// 反编译成功后替换当前项目，并返回项目树根节点供前端渲染。
+/// 打开 `.hark` 时先校验完整性（CRC32 + SHA-256），再加载其引用的源文件；
+/// 源文件不存在或已被移动时返回明确错误。反编译成功后替换当前项目。
 ///
 /// # Errors
-/// 文件不存在、格式不支持、`ark_disasm` 不可用或反编译失败时，
-/// 返回可直接展示给用户的中文错误信息；此时保留原项目不变。
+/// 文件不存在、格式不支持、`.hark` 校验失败、`ark_disasm` 不可用或
+/// 反编译失败时，返回可直接展示给用户的中文错误信息；此时保留原项目不变。
 #[tauri::command]
-fn open_project(path: String, state: State<AppState>) -> Result<TreeNode, String> {
+fn open_project(path: String, state: State<AppState>) -> Result<OpenProjectResult, String> {
+    let path = std::path::Path::new(&path);
+    let ext = path
+        .extension()
+        .map(|e| e.to_ascii_lowercase().to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    // `.hark`：先校验并解出会话元数据，再按其中记录的源文件打开
+    let session = if ext == "hark" {
+        Some(hark::load(path)?)
+    } else {
+        None
+    };
+    let open_path = session
+        .as_ref()
+        .map(|m| std::path::PathBuf::from(&m.project.source_path))
+        .unwrap_or_else(|| path.to_path_buf());
+    if !open_path.exists() {
+        return Err(format!("源文件不存在或已被移动: {}", open_path.display()));
+    }
+
     let configured = state.tool_path.lock().unwrap().clone();
-    let p = Project::open(std::path::Path::new(&path), configured.as_deref())?;
+    let p = Project::open(&open_path, configured.as_deref())?;
     let tree = p.tree().clone();
     *state.project.lock().unwrap() = Some(p);
-    Ok(tree)
+    Ok(OpenProjectResult { tree, session })
 }
 
 /// 关闭当前项目并释放其占用的内存。
 #[tauri::command]
 fn close_project(state: State<AppState>) {
     *state.project.lock().unwrap() = None;
+}
+
+/// 把当前打开的项目与前端提供的工作区快照保存为 `.hark` 文件。
+///
+/// 项目信息（名称 / 类型 / 源文件路径）由后端从当前 [`Project`] 提取，
+/// `workspace` 为前端整理的标签与激活状态快照。
+///
+/// # Errors
+/// 无已打开项目、路径为空或写入失败时返回中文错误信息。
+#[tauri::command]
+fn save_project_hark(
+    path: String,
+    workspace: Option<hark::SavedWorkspace>,
+    state: State<AppState>,
+) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("保存路径为空".into());
+    }
+    let guard = state.project.lock().unwrap();
+    let p = guard.as_ref().ok_or("没有已打开的项目")?;
+
+    let meta = hark::HarkMeta {
+        app: env!("CARGO_PKG_NAME").to_string(),
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+        saved_at_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| format!("获取系统时间失败: {e}"))?
+            .as_millis() as u64,
+        project: hark::ProjectInfo {
+            name: p.name.clone(),
+            kind: p.kind.clone(),
+            source_path: p.source_path.to_string_lossy().to_string(),
+        },
+        workspace: workspace.unwrap_or_default(),
+    };
+    hark::save(std::path::Path::new(&path), &meta)
 }
 
 /// 获取指定节点的内容切片（类 / 方法 / 单元概览）。
@@ -121,6 +190,7 @@ pub fn run() {
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             open_project,
+            save_project_hark,
             close_project,
             get_content,
             export_node_ets,

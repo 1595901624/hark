@@ -142,6 +142,9 @@ export default function TitleBar({ onNavigate, onToggleSidebar }: TitleBarProps)
           <div className="flex h-full items-center gap-0.5 text-[13px]" data-tauri-drag-region>
             <DesktopTitleMenu menuKey="file" label="文件" activeMenu={activeTitleMenu} onActiveMenuChange={setActiveTitleMenu} onPointerDown={rememberEditableElement}>
               {desktopMenuItem("open", "打开文件…", "Ctrl+O", () => window.dispatchEvent(new Event("abcde:open-file")))}
+              {desktopMenuItem("save", "保存", "Ctrl+S", () => window.dispatchEvent(new Event("abcde:save-project")))}
+              {desktopMenuItem("save-as", "另存为…", "Ctrl+Shift+S", () => window.dispatchEvent(new Event("abcde:save-project-as")))}
+              <DropdownSeparator />
               {desktopMenuItem("close-project", "关闭项目", undefined, () => window.dispatchEvent(new Event("abcde:close-project")))}
               <DropdownSeparator />
               {desktopMenuItem("disassembler", "反编译器设置…", undefined, () => window.dispatchEvent(new Event("abcde:configure-tool")))}
