@@ -6,8 +6,13 @@
  * - `language === "ts"`：针对还原的 ArkTS/TypeScript 做关键字 /
  *   字符串 / 数字 / 注释 / 装饰器高亮；
  * - 其他语言纯文本渲染。
+ *
+ * 另外支持编辑器内查找叠加层：传入 `findQuery` 后高亮全部匹配，
+ * `activeMatchIndex` 指定的当前匹配使用强调样式并自动滚动到可见区域；
+ * `scrollToLine` 用于全局搜索结果点击后的行定位跳转。
  */
-import { useMemo } from "react"
+import { useEffect, useMemo, useRef } from "react"
+import type { ReactNode } from "react"
 
 /** {@linkcode CodeView} 的组件属性。 */
 interface CodeViewProps {
@@ -15,6 +20,16 @@ interface CodeViewProps {
   content: string
   /** 语言标记：`asm` / `ts` 启用对应高亮，其他值按纯文本渲染。 */
   language: string
+  /** 编辑器内查找的查询文本；为空时禁用查找叠加层。 */
+  findQuery?: string
+  /** 查找是否区分大小写。 */
+  findCaseSensitive?: boolean
+  /** 当前激活匹配的全局扁平序号（未激活传 -1）。 */
+  activeMatchIndex?: number
+  /** 匹配总数变化时上报（供查找条显示 n/m）。 */
+  onFindStats?: (total: number) => void
+  /** 行定位请求；`seq` 变化即触发滚动。 */
+  scrollToLine?: { line: number; seq: number } | null
 }
 
 /** 视为伪指令关键字高亮的行首 token。 */
@@ -26,19 +41,137 @@ const ASM_KEYWORDS = new Set([
   ".access_flags",
 ])
 
+/** 单个匹配在当前匹配样式 / 普通匹配样式间的类名。 */
+const MARK_ACTIVE = "rounded-[2px] bg-warning/60 text-foreground"
+const MARK_IDLE = "rounded-[2px] bg-warning/25 text-foreground"
+
+/**
+ * 在单行文本中查找查询的全部出现区间（字符下标，前闭后开）。
+ * @param hay 行文本
+ * @param needle 查询文本（空串返回空）
+ * @param caseSensitive 是否区分大小写
+ */
+export function findRanges(
+  hay: string,
+  needle: string,
+  caseSensitive: boolean,
+): [number, number][] {
+  if (!needle) return []
+  const h = caseSensitive ? hay : hay.toLowerCase()
+  const n = caseSensitive ? needle : needle.toLowerCase()
+  const out: [number, number][] = []
+  let i = 0
+  while ((i = h.indexOf(n, i)) !== -1) {
+    out.push([i, i + n.length])
+    i += n.length
+  }
+  return out
+}
+
 /**
  * 渲染带行号栏的代码区域。
  *
  * 行号栏使用 `sticky` 定位，横向滚动时保持可见。
  */
-export function CodeView({ content, language }: CodeViewProps) {
+export function CodeView({
+  content,
+  language,
+  findQuery = "",
+  findCaseSensitive = false,
+  activeMatchIndex = -1,
+  onFindStats,
+  scrollToLine = null,
+}: CodeViewProps) {
   /** 按行拆分后的正文（依赖缓存，避免每次渲染重复拆分） */
   const lines = useMemo(() => content.split("\n"), [content])
   const isAsm = language === "asm"
   const isTs = language === "ts"
 
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  /** 每行匹配区间列表 + 每行首个匹配的全局扁平序号（前缀和）。 */
+  const { matchesByLine, lineOffsets, totalMatches } = useMemo(() => {
+    const matchesByLine: [number, number][][] = []
+    const lineOffsets: number[] = []
+    let total = 0
+    for (const line of lines) {
+      lineOffsets.push(total)
+      const ranges = findRanges(line, findQuery, findCaseSensitive)
+      matchesByLine.push(ranges)
+      total += ranges.length
+    }
+    return { matchesByLine, lineOffsets, totalMatches: total }
+  }, [lines, findQuery, findCaseSensitive])
+
+  // 匹配总数变化时上报给查找条
+  useEffect(() => {
+    onFindStats?.(totalMatches)
+  }, [totalMatches, onFindStats])
+
+  /** 当前激活匹配所在行（用于滚动与样式强调）。 */
+  const activeLine = useMemo(() => {
+    if (activeMatchIndex < 0 || activeMatchIndex >= totalMatches) return -1
+    let acc = 0
+    for (let li = 0; li < matchesByLine.length; li++) {
+      const count = matchesByLine[li].length
+      if (activeMatchIndex < acc + count) return li
+      acc += count
+    }
+    return -1
+  }, [activeMatchIndex, matchesByLine, totalMatches])
+
+  // 当前行定位请求：滚动目标行至视口中央
+  useEffect(() => {
+    if (!scrollToLine || scrollToLine.line <= 0) return
+    const el = containerRef.current?.querySelector<HTMLElement>(
+      `[data-line="${scrollToLine.line}"]`,
+    )
+    el?.scrollIntoView({ block: "center" })
+  }, [scrollToLine])
+
+  // 激活匹配变化：保持当前匹配可见
+  useEffect(() => {
+    if (activeLine < 0) return
+    const el = containerRef.current?.querySelector<HTMLElement>(
+      `[data-line="${activeLine + 1}"]`,
+    )
+    el?.scrollIntoView({ block: "center" })
+  }, [activeLine])
+
+  /**
+   * 渲染单行：先按查找匹配切分，非匹配段走常规语法高亮，
+   * 匹配段以 `<mark>` 覆盖（当前匹配用强调样式）。
+   * @param line 单行文本
+   * @param ranges 该行的匹配区间列表
+   * @param lineFlatBase 该行首个匹配的全局扁平序号
+   */
+  const renderLine = (line: string, ranges: [number, number][], lineFlatBase: number) => {
+    const highlight = (text: string) =>
+      isAsm ? highlightAsm(text) : isTs ? highlightTs(text) : text || " "
+    if (ranges.length === 0) return highlight(line)
+    const nodes: ReactNode[] = []
+    let cursor = 0
+    let key = 0
+    for (let mi = 0; mi < ranges.length; mi++) {
+      const [s, e] = ranges[mi]
+      if (s > cursor) nodes.push(<span key={key++}>{highlight(line.slice(cursor, s))}</span>)
+      const isActive = activeMatchIndex === lineFlatBase + mi
+      nodes.push(
+        <mark key={key++} className={isActive ? MARK_ACTIVE : MARK_IDLE}>
+          {line.slice(s, e) || " "}
+        </mark>,
+      )
+      cursor = e
+    }
+    if (cursor < line.length) nodes.push(<span key={key++}>{highlight(line.slice(cursor))}</span>)
+    return nodes
+  }
+
   return (
-    <div className="flex min-h-0 flex-1 overflow-auto bg-background font-mono text-[12.5px] leading-[20px]">
+    <div
+      ref={containerRef}
+      className="flex min-h-0 flex-1 overflow-auto bg-background font-mono text-[12.5px] leading-[20px]"
+    >
       <div className="sticky left-0 z-10 shrink-0 select-none border-r border-default-200/60 bg-default-50 px-3 py-3 text-right text-default-300 dark:bg-default-50/50">
         {lines.map((_, i) => (
           <div key={i}>{i + 1}</div>
@@ -46,8 +179,8 @@ export function CodeView({ content, language }: CodeViewProps) {
       </div>
       <pre className="flex-1 px-4 py-3 whitespace-pre text-foreground">
         {lines.map((line, i) => (
-          <div key={i} className="min-h-[20px]">
-            {isAsm ? highlightAsm(line) : isTs ? highlightTs(line) : line || " "}
+          <div key={i} data-line={i + 1} className="min-h-[20px]">
+            {renderLine(line, matchesByLine[i], lineOffsets[i])}
           </div>
         ))}
       </pre>

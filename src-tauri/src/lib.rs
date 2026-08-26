@@ -1,4 +1,4 @@
-//! abcde 库入口：注册 Tauri 插件、共享状态与前端可调用的命令。
+//! Hark 库入口：注册 Tauri 插件、共享状态与前端可调用的命令。
 //!
 //! 命令一览：
 //! - [`open_project`]：打开 `.abc` / `.hap` / `.har` / `.hark` 并返回项目树；
@@ -6,26 +6,31 @@
 //! - [`get_content`]：按节点 ID 获取内容切片（支持 abc / ets 双视图）；
 //! - [`export_node_ets`]：把节点的 ArkTS 还原结果导出为文件；
 //! - [`close_project`]：关闭当前项目；
-//! - [`set_disassembler_path`]：配置官方 `ark_disasm` 路径。
+//! - [`set_disassembler_path`]：配置官方 `ark_disasm` 路径；
+//! - [`search_project`]：全局多类别搜索（类 / 方法 / 字段 / 字符串 / 代码 / 资源）。
 
 pub mod decompiler;
 pub mod hark;
 pub mod pa;
 mod project;
 mod runner;
+pub mod search;
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use project::{NodeContent, Project, TreeNode};
 use serde::Serialize;
-use tauri::State;
+use tauri::{Manager, State};
 
-/// 应用共享状态：当前项目 + 反编译工具路径配置。
+/// 应用共享状态：当前项目 + 反编译工具路径配置 + 搜索取消代次。
 struct AppState {
     /// 当前打开的项目；`None` 表示未打开。
     project: Mutex<Option<Project>>,
     /// 用户配置的 `ark_disasm` 路径；`None` 表示自动探测。
     tool_path: Mutex<Option<String>>,
+    /// 搜索代次计数器：每次发起新搜索递增，旧搜索据此自行终止。
+    search_generation: AtomicU64,
 }
 
 impl AppState {
@@ -34,6 +39,7 @@ impl AppState {
         AppState {
             project: Mutex::new(None),
             tool_path: Mutex::new(None),
+            search_generation: AtomicU64::new(0),
         }
     }
 }
@@ -180,6 +186,32 @@ fn set_disassembler_path(path: Option<String>, state: State<AppState>) -> Result
     Ok(true)
 }
 
+/// 全局搜索当前打开的项目（后台线程执行，避免阻塞主线程）。
+///
+/// 前端连续输入时旧搜索会因代次变化自行取消，返回 `cancelled: true` 的
+/// 空结果，前端可直接忽略。
+///
+/// # Errors
+/// 无已打开项目或搜索参数非法时返回中文错误信息。
+#[tauri::command]
+async fn search_project(
+    options: search::SearchOptions,
+    app: tauri::AppHandle,
+) -> Result<search::SearchResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        // 发起新搜索：代次 +1；扫描过程中检测到代次变化即提前退出
+        let my_generation = state.search_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let guard = state.project.lock().unwrap();
+        let project = guard.as_ref().ok_or("没有已打开的项目")?;
+        let is_cancelled =
+            || state.search_generation.load(Ordering::SeqCst) != my_generation;
+        project.search(&options, &is_cancelled)
+    })
+    .await
+    .map_err(|e| format!("搜索任务执行失败: {e}"))?
+}
+
 /// Tauri 应用入口：注册插件、状态与命令后启动主窗口。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -194,7 +226,8 @@ pub fn run() {
             close_project,
             get_content,
             export_node_ets,
-            set_disassembler_path
+            set_disassembler_path,
+            search_project
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,32 +1,46 @@
 /**
  * 反编译工作台主组件（jadx-gui 风格布局）。
  *
- * 布局：顶部标题栏 + 左侧可拖宽的项目树面板 + 右侧多标签代码区。
+ * 布局：左侧可拖宽的侧栏（资源树 / 全局搜索双视图切换）+ 右侧多标签代码区
+ * （顶部标题栏由 App 统一渲染）。
  *
  * 职责：
  * - 通过原生对话框 / Ctrl+O / 拖拽打开 `.abc` / `.hap` / `.hark` 文件；
- * - 监听标题栏菜单派发的全局事件（打开文件 / 保存 / 另存为 / 关闭项目 / 反编译器设置）；
+ * - 监听标题栏菜单派发的全局事件（打开文件 / 保存 / 另存为 / 关闭项目）；
  * - 「保存 / 另存为」把当前项目与工作区快照写入 `.hark` 二进制工作区文件，
  *   打开 `.hark` 时校验完整性并恢复标签、视图与项目树展开现场；
  * - 管理编辑器标签（最多 12 个）并懒加载节点内容；
+ * - 全局搜索（Ctrl+Shift+F）：多类别检索，结果点击后打开对应类并定位行；
+ * - 编辑器内查找（Ctrl+F）：高亮全部匹配并支持上一个 / 下一个导航；
  * - 每个内容区提供 `.abc`（反汇编）/ `.ets`（ArkTS 还原）双视图，
  *   按需加载并缓存两份内容，支持把 `.ets` 导出为文件；
- * - 持久化侧栏宽度与 `ark_disasm` 路径配置。
+ * - 持久化侧栏宽度与侧栏视图选择；打开项目时同步设置页配置的 `ark_disasm` 路径。
  */
 import { useCallback, useEffect, useRef, useState } from "react"
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog"
 import { getCurrentWebview } from "@tauri-apps/api/webview"
-import { Download, FileCode2, FolderOpen, LoaderCircle, Settings2 } from "lucide-react"
+import { Download, FileCode2, FolderOpen, FolderTree, LoaderCircle, Search, Settings2 } from "lucide-react"
 import { ChevronsDownUp, ChevronsUpDown } from "lucide-react"
-import TitleBar from "../TitleBar"
-import { Button, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, addToast } from "../ui/base-ui"
+import { Button, addToast } from "../ui/base-ui"
 import { usePersistentState } from "../../hooks/usePersistentState"
 import { cn } from "../../lib/utils"
-import { api, type NodeContent, type OpenProjectResult, type SavedWorkspace, type TreeNode, type ViewKind } from "../../lib/api"
+import { getStoredItem } from "../../lib/store"
+import {
+  api,
+  type NodeContent,
+  type OpenProjectResult,
+  type SavedWorkspace,
+  type SearchHit,
+  type TreeNode,
+  type ViewKind,
+} from "../../lib/api"
+import type { ToolId } from "../../lib/navigation"
 import { ProjectTree, type TreeCommand } from "./ProjectTree"
 import { EditorTabs, type EditorTab } from "./EditorTabs"
 import { CodeView } from "./CodeView"
 import { ViewSwitcher } from "./ViewSwitcher"
+import { SearchPanel } from "./SearchPanel"
+import { EditorFindBar } from "./EditorFindBar"
 
 /** 原生打开对话框的文件类型过滤器。 */
 const FILE_FILTERS = [
@@ -37,7 +51,14 @@ const FILE_FILTERS = [
 ]
 
 /** `.hark` 工作区文件的原生保存对话框过滤器。 */
-const HARK_FILTERS = [{ name: "abcde 工作区", extensions: ["hark"] }]
+const HARK_FILTERS = [{ name: "Hark 工作区", extensions: ["hark"] }]
+
+interface WorkspaceProps {
+  /** 项目树侧栏是否收起（状态由 App 持有并持久化，标题栏按钮切换）。 */
+  isSidebarCollapsed: boolean
+  /** 页面导航（如跳转到设置页的指定分区）。 */
+  onNavigate?: (toolId: ToolId, tabId?: string) => void
+}
 
 /** 单个标签的完整状态：标签信息 + 双视图内容缓存。 */
 interface TabEntry {
@@ -74,6 +95,18 @@ function findTreeNode(root: TreeNode, id: number): TreeNode | null {
   return null
 }
 
+/** 读取设置页持久化的 `ark_disasm` 路径（未配置或解析失败时返回空串）。 */
+async function readStoredToolPath(): Promise<string> {
+  try {
+    const raw = await getStoredItem("disassembler-path")
+    if (!raw) return ""
+    const parsed: unknown = JSON.parse(raw)
+    return typeof parsed === "string" ? parsed.trim() : ""
+  } catch {
+    return ""
+  }
+}
+
 /**
  * 渲染整个工作台界面。
  *
@@ -81,7 +114,7 @@ function findTreeNode(root: TreeNode, id: number): TreeNode | null {
  * 有项目时左侧渲染项目树，右侧按标签状态（加载中 / 出错 / 有内容）
  * 渲染对应视图。
  */
-export function Workspace() {
+export function Workspace({ isSidebarCollapsed, onNavigate }: WorkspaceProps) {
   /** 项目树根节点；`null` 表示未打开项目 */
   const [tree, setTree] = useState<TreeNode | null>(null)
   /** 当前项目名（打开文件的文件名） */
@@ -104,27 +137,28 @@ export function Workspace() {
   const expandedIdsRef = useRef<number[]>([])
   /** 侧栏宽度（持久化） */
   const [sidebarWidth, setSidebarWidth] = usePersistentState<number>("workspace-sidebar-width", 280)
-  /** 侧栏是否收起（持久化，由标题栏左上角按钮切换） */
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = usePersistentState<boolean>(
-    "workspace-sidebar-collapsed",
-    false,
-  )
   /** 是否正在拖拽调整侧栏宽度（拖拽期间禁用宽度过渡动画） */
   const [isResizing, setIsResizing] = useState(false)
-  /** 切换侧栏收起/展开状态 */
-  const toggleSidebar = () => setIsSidebarCollapsed(collapsed => !collapsed)
-  /** 反编译器设置弹窗是否打开 */
-  const [toolModalOpen, setToolModalOpen] = useState(false)
-  /** 弹窗中的路径输入草稿 */
-  const [toolPathDraft, setToolPathDraft] = useState("")
-  /** 已保存的 `ark_disasm` 路径（持久化） */
-  const [toolPath, setToolPath, , toolPathLoaded] = usePersistentState<string>("disassembler-path", "")
-  /** 已加载完成后的工具路径快照，供回调读取最新值 */
-  const toolPathRef = useRef("")
-  toolPathRef.current = toolPathLoaded ? toolPath : ""
   /** 下发给项目树的展开/折叠指令（携带递增 seq 保证重复指令生效） */
   const [treeCommand, setTreeCommand] = useState<TreeCommand | null>(null)
   const treeCommandSeq = useRef(0)
+  /** 侧栏当前视图：资源树 / 全局搜索（持久化） */
+  const [sidebarView, setSidebarView] = usePersistentState<"tree" | "search">("workspace-sidebar-view", "tree")
+  /** 搜索面板聚焦信号：Ctrl+Shift+F 时递增 */
+  const [searchFocusSeq, setSearchFocusSeq] = useState(0)
+  /** 是否显示编辑器内查找条（Ctrl+F） */
+  const [showFindBar, setShowFindBar] = useState(false)
+  /** 查找条查询文本 */
+  const [findQuery, setFindQuery] = useState("")
+  /** 查找是否区分大小写 */
+  const [findCaseSensitive, setFindCaseSensitive] = useState(false)
+  /** 当前激活匹配序号（0-based） */
+  const [activeMatch, setActiveMatch] = useState(0)
+  /** 当前内容中的匹配总数（由 CodeView 上报） */
+  const [findTotal, setFindTotal] = useState(0)
+  /** 全局搜索结果点击后的行定位请求 */
+  const [scrollTarget, setScrollTarget] = useState<{ nodeId: number; line: number; seq: number } | null>(null)
+  const scrollTargetSeq = useRef(0)
 
   /** 全部展开项目树。 */
   const expandAll = () =>
@@ -132,6 +166,12 @@ export function Workspace() {
   /** 全部折叠项目树（仅保留根节点展开）。 */
   const collapseAll = () =>
     setTreeCommand({ type: "collapse-all", seq: ++treeCommandSeq.current })
+
+  /** 打开侧栏全局搜索视图并聚焦输入框（Ctrl+Shift+F）。 */
+  const openGlobalSearch = useCallback(() => {
+    setSidebarView("search")
+    setSearchFocusSeq(seq => seq + 1)
+  }, [setSidebarView])
 
   // ---------- 内容加载 ----------
 
@@ -185,6 +225,9 @@ export function Workspace() {
       const t = result.tree
       setTree(t)
       setProjectName(t.name)
+      // 新项目的节点 ID 会重新分配，旧的搜索行定位请求必须作废
+      setScrollTarget(null)
+      setShowFindBar(false)
       // 仅当打开的确实是 `.hark` 文件时才绑定会话路径，后续「保存」直接覆写
       const isHark = path.toLowerCase().endsWith(".hark")
       setHarkPath(isHark ? path : null)
@@ -220,8 +263,8 @@ export function Workspace() {
       if (isHark && ws) {
         setTreeCommand({ type: "set-expanded", ids: ws.expandedNodeIds ?? [], seq: ++treeCommandSeq.current })
       }
-      // 同步一次工具路径，便于后端立即校验/缓存
-      void api.setDisassemblerPath(toolPathRef.current.trim() || null)
+      // 同步一次工具路径（读取设置页的持久化配置），便于后端立即校验/缓存
+      void api.setDisassemblerPath((await readStoredToolPath()) || null)
     } catch (e) {
       addToast({ title: "打开失败", description: String(e), severity: "danger" })
     } finally {
@@ -312,32 +355,28 @@ export function Workspace() {
       setTabs([])
       setActiveKey(undefined)
       setHarkPath(null)
+      setShowFindBar(false)
+      setScrollTarget(null)
       void api.closeProject()
     }
     /** 标题栏「文件 → 保存」 */
     const onSaveProject = () => void saveProject()
     /** 标题栏「文件 → 另存为…」 */
     const onSaveProjectAs = () => void saveProjectAs()
-    /** 标题栏「文件 → 反编译器设置…」 */
-    const onConfigureTool = () => {
-      setToolPathDraft(toolPathRef.current)
-      setToolModalOpen(true)
-    }
-    window.addEventListener("abcde:open-file", onOpenFile)
-    window.addEventListener("abcde:close-project", onCloseProject)
-    window.addEventListener("abcde:save-project", onSaveProject)
-    window.addEventListener("abcde:save-project-as", onSaveProjectAs)
-    window.addEventListener("abcde:configure-tool", onConfigureTool)
+    window.addEventListener("hark:open-file", onOpenFile)
+    window.addEventListener("hark:close-project", onCloseProject)
+    window.addEventListener("hark:save-project", onSaveProject)
+    window.addEventListener("hark:save-project-as", onSaveProjectAs)
     return () => {
-      window.removeEventListener("abcde:open-file", onOpenFile)
-      window.removeEventListener("abcde:close-project", onCloseProject)
-      window.removeEventListener("abcde:save-project", onSaveProject)
-      window.removeEventListener("abcde:save-project-as", onSaveProjectAs)
-      window.removeEventListener("abcde:configure-tool", onConfigureTool)
+      window.removeEventListener("hark:open-file", onOpenFile)
+      window.removeEventListener("hark:close-project", onCloseProject)
+      window.removeEventListener("hark:save-project", onSaveProject)
+      window.removeEventListener("hark:save-project-as", onSaveProjectAs)
     }
   }, [pickAndOpen, saveProject, saveProjectAs])
 
   // Ctrl+O 打开 / Ctrl+S 保存 / Ctrl+Shift+S 另存为
+  // Ctrl+Shift+F 全局搜索 / Ctrl+F 编辑器内查找
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return
@@ -351,11 +390,19 @@ export function Workspace() {
           if (e.shiftKey) void saveProjectAs()
           else void saveProject()
           break
+        case "f":
+          e.preventDefault()
+          if (e.shiftKey) {
+            openGlobalSearch()
+          } else if (tabsRef.current.length > 0) {
+            setShowFindBar(true)
+          }
+          break
       }
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [pickAndOpen, saveProject, saveProjectAs])
+  }, [pickAndOpen, saveProject, saveProjectAs, openGlobalSearch])
 
   // 拖拽文件进窗口直接打开（仅 Tauri 环境）
   useEffect(() => {
@@ -416,6 +463,41 @@ export function Workspace() {
     },
     [loadView],
   )
+
+  /**
+   * 全局搜索命中点击：打开对应类 / 资源节点；
+   * 带行号时同时下发滚动定位请求（内容就绪后由 CodeView 执行）。
+   */
+  const openSearchHit = useCallback(
+    (hit: SearchHit) => {
+      if (!tree) return
+      const node = findTreeNode(tree, hit.classNodeId)
+      if (!node) return
+      openNode(node)
+      setScrollTarget(hit.line > 0 ? { nodeId: node.id, line: hit.line, seq: ++scrollTargetSeq.current } : null)
+    },
+    [tree, openNode],
+  )
+
+  /** 编辑器内查找：按方向切换当前激活匹配（循环）。 */
+  const stepMatch = useCallback(
+    (dir: 1 | -1) => {
+      if (findTotal <= 0) return
+      setActiveMatch(prev => ((prev + dir) % findTotal + findTotal) % findTotal)
+    },
+    [findTotal],
+  )
+
+  /** 查找条查询变化：重置当前匹配序号。 */
+  const changeFindQuery = useCallback((value: string) => {
+    setFindQuery(value)
+    setActiveMatch(0)
+  }, [])
+
+  // 切换标签时重置编辑器内查找的当前匹配序号
+  useEffect(() => {
+    setActiveMatch(0)
+  }, [activeKey])
 
   /** 把当前激活标签的 `.ets` 视图导出为文件。 */
   const exportActiveEts = useCallback(async () => {
@@ -488,11 +570,8 @@ export function Workspace() {
   }
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-chrome text-foreground">
-      <TitleBar onToggleSidebar={toggleSidebar} />
-
-      <div className="flex min-h-0 flex-1">
-        {/* 左侧项目树面板 */}
+    <div className="flex min-h-0 flex-1 overflow-hidden">
+      {/* 左侧项目树面板 */}
         <aside
           className={cn(
             "relative flex shrink-0 flex-col overflow-hidden border-r border-default-200/80 bg-chrome",
@@ -500,10 +579,33 @@ export function Workspace() {
           )}
           style={{ width: isSidebarCollapsed ? 0 : sidebarWidth }}
         >
-          <div className="flex h-9 shrink-0 items-center justify-between border-b border-default-200/70 px-3">
-            <span className="text-[12px] font-medium tracking-wide text-default-500">项目</span>
+          <div className="flex h-9 shrink-0 items-center justify-between border-b border-default-200/70 pl-2 pr-3">
+            {/* 视图切换：资源树 / 搜索 */}
+            <div className="flex items-center gap-0.5 rounded-md bg-default-100/60 p-0.5">
+              {(
+                [
+                  { id: "tree", label: "资源树", icon: FolderTree },
+                  { id: "search", label: "搜索", icon: Search },
+                ] as const
+              ).map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setSidebarView(id)}
+                  className={cn(
+                    "flex h-[22px] items-center gap-1 rounded-[5px] px-2 text-[11.5px] font-medium transition-colors",
+                    sidebarView === id
+                      ? "bg-background text-foreground shadow-sm shadow-black/[0.06]"
+                      : "text-default-500 hover:text-foreground",
+                  )}
+                >
+                  <Icon className="h-3 w-3" />
+                  {label}
+                </button>
+              ))}
+            </div>
             <div className="flex items-center gap-0.5">
-              {tree && (
+              {tree && sidebarView === "tree" && (
                 <>
                   <Button
                     isIconOnly
@@ -541,23 +643,27 @@ export function Workspace() {
               </Button>
             </div>
           </div>
-          <div className="min-h-0 flex-1 overflow-auto py-2 scrollbar-thin">
-            {tree ? (
-              <ProjectTree
-                tree={tree}
-                activeNodeId={activeTab?.tab.nodeId}
-                onOpenNode={openNode}
-                command={treeCommand}
-                onExpandedChange={handleExpandedChange}
-              />
-            ) : (
-              <p className="px-4 py-8 text-center text-[12.5px] leading-relaxed text-default-400">
-                尚未打开项目
-                <br />
-                点击右上角图标或按 Ctrl+O
-              </p>
-            )}
-          </div>
+          {sidebarView === "tree" ? (
+            <div className="min-h-0 flex-1 overflow-auto py-2 scrollbar-thin">
+              {tree ? (
+                <ProjectTree
+                  tree={tree}
+                  activeNodeId={activeTab?.tab.nodeId}
+                  onOpenNode={openNode}
+                  command={treeCommand}
+                  onExpandedChange={handleExpandedChange}
+                />
+              ) : (
+                <p className="px-4 py-8 text-center text-[12.5px] leading-relaxed text-default-400">
+                  尚未打开项目
+                  <br />
+                  点击右上角图标或按 Ctrl+O
+                </p>
+              )}
+            </div>
+          ) : (
+            <SearchPanel hasProject={!!tree} onOpenHit={openSearchHit} focusSeq={searchFocusSeq} />
+          )}
           {/* 侧栏拖宽分隔条（收起时隐藏） */}
           {!isSidebarCollapsed && (
             <div
@@ -583,7 +689,7 @@ export function Workspace() {
             />
           ) : (
             <div className="flex h-[38px] shrink-0 items-center border-b border-default-200/80 bg-chrome px-4 text-[12.5px] text-default-400">
-              {projectName ?? "abcde"}
+              {projectName ?? "Hark"}
             </div>
           )}
 
@@ -637,7 +743,34 @@ export function Workspace() {
           ) : activeError ? (
             <EmptyState icon={<FileCode2 className="h-10 w-10 text-default-300" />} text={activeError} />
           ) : activeContent ? (
-            <CodeView content={activeContent.body} language={activeContent.language} />
+            <div className="relative flex min-h-0 flex-1 flex-col">
+              <CodeView
+                content={activeContent.body}
+                language={activeContent.language}
+                findQuery={showFindBar ? findQuery : ""}
+                findCaseSensitive={findCaseSensitive}
+                activeMatchIndex={showFindBar && findTotal > 0 ? activeMatch : -1}
+                onFindStats={setFindTotal}
+                scrollToLine={
+                  scrollTarget && scrollTarget.nodeId === activeTab.tab.nodeId
+                    ? { line: scrollTarget.line, seq: scrollTarget.seq }
+                    : null
+                }
+              />
+              {showFindBar && (
+                <EditorFindBar
+                  query={findQuery}
+                  onQueryChange={changeFindQuery}
+                  caseSensitive={findCaseSensitive}
+                  onCaseSensitiveChange={setFindCaseSensitive}
+                  current={activeMatch}
+                  total={findTotal}
+                  onNext={() => stepMatch(1)}
+                  onPrev={() => stepMatch(-1)}
+                  onClose={() => setShowFindBar(false)}
+                />
+              )}
+            </div>
           ) : (
             <EmptyState
               icon={<FileCode2 className="h-12 w-12 text-default-300" />}
@@ -656,10 +789,7 @@ export function Workspace() {
                       variant="bordered"
                       size="sm"
                       startContent={<Settings2 className="h-3.5 w-3.5" />}
-                      onPress={() => {
-                        setToolPathDraft(toolPathRef.current)
-                        setToolModalOpen(true)
-                      }}
+                      onPress={() => onNavigate?.("settings", "decompiler")}
                     >
                       反编译器设置
                     </Button>
@@ -670,46 +800,6 @@ export function Workspace() {
           )}
         </main>
       </div>
-
-      {/* 反编译器设置弹窗 */}
-      <Modal isOpen={toolModalOpen} onClose={() => setToolModalOpen(false)}>
-        <ModalContent className="max-w-[480px]">
-          <ModalHeader>反编译器设置</ModalHeader>
-          <ModalBody className="space-y-3 text-sm">
-            <p className="leading-relaxed text-default-500">
-              abcde 调用 OpenHarmony 官方 <code className="rounded bg-default-100 px-1">ark_disasm</code>{" "}
-              工具反编译字节码。请填写其可执行文件的完整路径；留空则自动在应用目录与 PATH 中查找。
-            </p>
-            <Input
-              placeholder="C:\\tools\\ark_disasm.exe"
-              value={toolPathDraft}
-              onValueChange={setToolPathDraft}
-            />
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="light" onPress={() => setToolModalOpen(false)}>
-              取消
-            </Button>
-            <Button
-              color="primary"
-              onPress={async () => {
-                const value = toolPathDraft.trim() || ""
-                try {
-                  await api.setDisassemblerPath(value || null)
-                } catch (e) {
-                  addToast({ title: "ark_disasm 不可用", description: String(e), severity: "danger" })
-                  return
-                }
-                setToolPath(value)
-                setToolModalOpen(false)
-              }}
-            >
-              保存
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-    </div>
   )
 }
 

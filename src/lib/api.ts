@@ -72,6 +72,61 @@ export interface HarkSession {
   workspace: SavedWorkspace
 }
 
+/** 全局搜索类别（后端 `SearchCategory` 镜像，可多选）。 */
+export type SearchCategory =
+  | "class" // 类名
+  | "method" // 方法名
+  | "field" // 字段名
+  | "string" // 字符串字面量内容
+  | "code" // 反汇编代码全文
+  | "resource" // 压缩包内资源文件路径
+
+/** 全局搜索参数。 */
+export interface SearchOptions {
+  /** 查询文本；正则模式下为表达式。 */
+  query: string
+  /** 启用的类别（至少一个）。 */
+  categories: SearchCategory[]
+  /** 是否区分大小写。 */
+  caseSensitive?: boolean
+  /** 是否按正则表达式解析查询。 */
+  isRegex?: boolean
+  /** 返回结果上限，默认 1000。 */
+  maxResults?: number
+}
+
+/** 单条全局搜索命中。 */
+export interface SearchHit {
+  /** 点击结果时应打开的节点 ID（类节点或资源节点）。 */
+  classNodeId: number
+  /** 分组标题：类展示名或资源文件路径。 */
+  classDisplayName: string
+  /** 所属 `.abc` 单元名；资源命中为空串。 */
+  unitName: string
+  /** 命中行（1-based，对应类的 abc 视图）；类名 / 资源命中为 0。 */
+  line: number
+  /** 命中行文本（trim 后）。 */
+  text: string
+  /** 高亮区间（`text` 内的字符下标，前闭后开）。 */
+  matchRanges: [number, number][]
+  /** 命中类别（同行多类别聚合）。 */
+  categories: SearchCategory[]
+}
+
+/** 全局搜索响应。 */
+export interface SearchResponse {
+  /** 命中列表（按项目树顺序排序）。 */
+  hits: SearchHit[]
+  /** 聚合后的命中总数。 */
+  totalMatches: number
+  /** 是否因超过上限被截断。 */
+  truncated: boolean
+  /** 搜索耗时（毫秒）。 */
+  elapsedMs: number
+  /** 被更新的搜索取消时为 `true`（结果为空，可忽略）。 */
+  cancelled: boolean
+}
+
 /** [`api.openProject`] 的返回值。 */
 export interface OpenProjectResult {
   /** 项目树根节点。 */
@@ -130,5 +185,13 @@ export const api = {
    */
   setDisassemblerPath(path: string | null): Promise<boolean> {
     return invoke<boolean>("set_disassembler_path", { path })
+  },
+
+  /**
+   * 全局多类别搜索当前打开的项目（后端后台线程执行，自动取消旧请求）。
+   * @param options 查询文本、类别集合与匹配选项
+   */
+  searchProject(options: SearchOptions): Promise<SearchResponse> {
+    return invoke<SearchResponse>("search_project", { options })
   },
 }

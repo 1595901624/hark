@@ -18,6 +18,7 @@ use serde::Serialize;
 use crate::decompiler::{self, LiteralNames};
 use crate::pa::{PaFile, PaMethod, PaRecord};
 use crate::runner;
+use crate::search::{self, SearchOptions, SearchResponse};
 
 /// 树节点的类型，前端据此选择图标与交互行为。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -89,13 +90,13 @@ enum NodePayload {
 }
 
 /// 一个已解析的 `.abc` 字节码单元。
-struct AbcUnit {
+pub(crate) struct AbcUnit {
     /// 展示名，如压缩包内的原始路径 `ets/modules.abc`。
-    name: String,
+    pub(crate) name: String,
     /// 反编译并解析后的 `.pa` 结构。
-    pa: PaFile,
+    pub(crate) pa: PaFile,
     /// 字面量池名称表（调用目标解析；旧版工具可能为空）。
-    names: LiteralNames,
+    pub(crate) names: LiteralNames,
 }
 
 /// 一个已打开的项目（对应一个用户打开的文件）。
@@ -112,6 +113,10 @@ pub struct Project {
     archive_entries: Vec<String>,
     /// 节点 ID -> 数据载荷映射。
     nodes: HashMap<u32, NodePayload>,
+    /// (单元下标, record 下标) -> 类节点 ID（搜索结果反向定位）。
+    class_nodes: HashMap<(usize, usize), u32>,
+    /// 资源条目下标 -> 资源节点 ID（资源名搜索反向定位）。
+    resource_nodes: HashMap<usize, u32>,
     /// 项目树根节点。
     tree: TreeNode,
     /// 节点 ID 分配计数器。
@@ -228,6 +233,8 @@ impl Project {
             units,
             archive_entries,
             nodes: HashMap::new(),
+            class_nodes: HashMap::new(),
+            resource_nodes: HashMap::new(),
             tree: TreeNode {
                 id: 0,
                 name: String::new(),
@@ -413,6 +420,24 @@ impl Project {
         fs::write(target, content.body)
             .map_err(|e| format!("写入 {target:?} 失败: {e}"))
     }
+
+    /// 全局搜索：对内存中已解析的 `.pa` 数据按多类别检索。
+    ///
+    /// `is_cancelled` 由命令层周期性检查；取消时结果为空且带
+    /// `cancelled: true` 标志，前端会丢弃该次结果。参数错误返回中文错误信息。
+    pub fn search(
+        &self,
+        options: &SearchOptions,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<SearchResponse, String> {
+        let ctx = search::SearchContext {
+            units: &self.units,
+            class_nodes: &self.class_nodes,
+            resource_entries: &self.archive_entries,
+            resource_nodes: &self.resource_nodes,
+        };
+        search::run(&ctx, options, is_cancelled)
+    }
 }
 
 /// 渲染单方法的 pandasm 文本（`.function` 头 + 重排缩进的指令体）。
@@ -440,7 +465,7 @@ fn temp_root() -> Result<PathBuf, String> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("abcde-{ts}"));
+    let dir = std::env::temp_dir().join(format!("hark-{ts}"));
     fs::create_dir_all(&dir).map_err(|e| format!("创建临时目录失败: {e}"))?;
     Ok(dir)
 }
@@ -550,6 +575,7 @@ fn flatten_packages(
             children: vec![],
         };
         project.nodes.insert(id, NodePayload::Class { unit, record: *ri });
+        project.class_nodes.insert((unit, *ri), id);
         for (mi, mname) in method_names.iter().enumerate() {
             let mid = project.alloc_id();
             tn.children.push(TreeNode {
@@ -584,6 +610,7 @@ fn build_resource_tree(project: &mut Project) -> Vec<TreeNode> {
             children: vec![],
         });
         project.nodes.insert(id, NodePayload::Resource { entry: i });
+        project.resource_nodes.insert(i, id);
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
