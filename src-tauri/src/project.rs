@@ -422,6 +422,19 @@ impl Project {
             .map_err(|e| format!("写入 {target:?} 失败: {e}"))
     }
 
+    /// 导出指定节点的反汇编文本（abc 视图）到目标路径（`.pa` 格式）。
+    ///
+    /// # Errors
+    /// 节点无效或写入失败时返回中文错误信息。
+    pub fn export_pa(&self, node_id: u32, target: &Path) -> Result<(), String> {
+        let content = self.content(node_id, "abc")?;
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
+        }
+        fs::write(target, content.body)
+            .map_err(|e| format!("写入 {target:?} 失败: {e}"))
+    }
+
     /// 全局搜索：对内存中已解析的 `.pa` 数据按多类别检索。
     ///
     /// `is_cancelled` 由命令层周期性检查；取消时结果为空且带

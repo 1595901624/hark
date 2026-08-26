@@ -5,6 +5,7 @@
 //! - [`save_project_hark`]：把当前项目与工作区快照保存为 `.hark` 文件；
 //! - [`get_content`]：按节点 ID 获取内容切片（支持 abc / ets 双视图）；
 //! - [`export_node_ets`]：把节点的 ArkTS 还原结果导出为文件；
+//! - [`export_node_pa`]：把节点的反汇编文本导出为 `.pa` 文件；
 //! - [`close_project`]：关闭当前项目；
 //! - [`set_disassembler_path`]：配置官方 `ark_disasm` 路径（保存前执行
 //!   `--version` 校验）；
@@ -197,6 +198,22 @@ fn export_node_ets(node_id: u32, path: String, state: State<AppState>) -> Result
     p.export_ets(node_id, std::path::Path::new(&path))
 }
 
+/// 导出指定节点的反汇编文本（abc 视图）为 `.pa` 文件。
+///
+/// 内容与前端 `.abc` 视图完全一致；目标目录不存在时自动创建。
+///
+/// # Errors
+/// 无已打开项目、节点无效或写入失败时返回中文错误信息。
+#[tauri::command]
+fn export_node_pa(node_id: u32, path: String, state: State<AppState>) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("导出路径为空".into());
+    }
+    let guard = state.project.lock().unwrap();
+    let p = guard.as_ref().ok_or("没有已打开的项目")?;
+    p.export_pa(node_id, std::path::Path::new(&path))
+}
+
 /// 配置官方 `ark_disasm` 可执行文件路径。
 ///
 /// - 传入 `Some(path)`：要求该路径指向实际存在的文件，并执行
@@ -298,6 +315,7 @@ pub fn run() {
             close_project,
             get_content,
             export_node_ets,
+            export_node_pa,
             set_disassembler_path,
             disassembler_version,
             search_project

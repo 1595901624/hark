@@ -179,6 +179,15 @@ export const api = {
   },
 
   /**
+   * 导出指定节点的反汇编文本（abc 视图）为 `.pa` 文件。
+   * @param nodeId 项目树节点 ID
+   * @param path 导出文件的绝对路径
+   */
+  exportNodePa(nodeId: number, path: string): Promise<void> {
+    return invoke<void>("export_node_pa", { nodeId, path })
+  },
+
+  /**
    * 配置官方 `ark_disasm` 可执行文件路径。
    *
    * 保存前后端会对目标二进制执行 `--version` 校验，失败时返回错误且不保存。

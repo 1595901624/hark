@@ -13,7 +13,8 @@
  * - 全局搜索（Ctrl+Shift+F）：多类别检索，结果点击后打开对应类并定位行；
  * - 编辑器内查找（Ctrl+F）：高亮全部匹配并支持上一个 / 下一个导航；
  * - 每个内容区提供 `.abc`（反汇编）/ `.ets`（ArkTS 还原）双视图，
- *   按需加载并缓存两份内容，支持把 `.ets` 导出为文件；
+ *   按需加载并缓存两份内容，支持把反汇编导出为 `.pa`、
+ *   把 ArkTS 还原结果导出为 `.ets` 文件；
  * - 持久化侧栏宽度与侧栏视图选择；打开项目时同步设置页配置的 `ark_disasm` 路径。
  */
 import { useCallback, useEffect, useRef, useState } from "react"
@@ -516,6 +517,26 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
     }
   }, [tabs, activeKey])
 
+  /** 把当前激活标签的反汇编文本（abc 视图）导出为 `.pa` 文件。 */
+  const exportActivePa = useCallback(async () => {
+    const entry = tabs.find(e => e.tab.key === activeKey)
+    const content = entry?.contents.abc
+    if (!entry || !content) return
+    const base = content.title.split("/").pop() ?? "output"
+    const safeName = base.replace(/[\\/:*?"<>|]/g, "_") || "output"
+    const selected = await saveFileDialog({
+      defaultPath: `${safeName}.pa`,
+      filters: [{ name: "pandasm 反汇编", extensions: ["pa"] }],
+    })
+    if (typeof selected !== "string") return
+    try {
+      await api.exportNodePa(entry.tab.nodeId, selected)
+      addToast({ title: "导出成功", description: selected, severity: "success" })
+    } catch (e) {
+      addToast({ title: "导出失败", description: String(e), severity: "danger" })
+    }
+  }, [tabs, activeKey])
+
   /**
    * 关闭指定标签；若关闭的是激活标签，则激活相邻的标签。
    * @param key 要关闭的标签 key
@@ -702,6 +723,20 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
                     value={activeTab.view}
                     onChange={view => activeTab && switchView(activeTab.tab.key, view)}
                   />
+                  {activeTab.view === "abc" && (
+                    <Button
+                      isIconOnly
+                      size="sm"
+                      variant="light"
+                      aria-label="导出反汇编 (.pa)"
+                      title="导出反汇编 (.pa)"
+                      isDisabled={!activeContent}
+                      onPress={() => void exportActivePa()}
+                      className="h-6 w-6 min-w-6 rounded-md text-default-500 hover:bg-black/[0.05] dark:hover:bg-white/[0.07]"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
                   {activeTab.view === "ets" && (
                     <Button
                       isIconOnly
