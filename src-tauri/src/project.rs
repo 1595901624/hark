@@ -139,13 +139,14 @@ impl Project {
     ///
     /// # 参数
     /// - `path`：要打开的文件路径；
-    /// - `tool_path`：用户配置的 `ark_disasm` 路径，`None` 时自动探测。
+    /// - `tool_path`：用户配置的 `ark_disasm` 路径，`None` 时自动探测；
+    /// - `bundled`：随应用分发的内置 `ark_disasm` 完整路径（资源目录）。
     ///
     /// # Errors
     /// 文件读取/解压失败、`ark_disasm` 不可用或执行失败、包内无 `.abc`
     /// 时返回中文错误信息（直接展示给用户）。
-    pub fn open(path: &Path, tool_path: Option<&str>) -> Result<Project, String> {
-        let tool = runner::locate(tool_path)?;
+    pub fn open(path: &Path, tool_path: Option<&str>, bundled: Option<&Path>) -> Result<Project, String> {
+        let tool = runner::locate(tool_path, bundled)?;
         let file_name = path
             .file_name()
             .map(|s| s.to_string_lossy().to_string())

@@ -16,11 +16,12 @@ use crate::decompiler::{parse_literal_names, LiteralNames};
 /// 探测顺序：
 /// 1. 用户在设置中配置的路径（`configured`）；
 /// 2. `HARK_ARK_DISASM` 环境变量；
-/// 3. 应用自身可执行文件所在目录（随包分发的 sidecar）；
-/// 4. 系统 `PATH` 环境变量中的各个目录。
+/// 3. 随应用分发的内置副本（`bundled`，资源目录下的完整文件路径）；
+/// 4. 应用自身可执行文件所在目录（随包分发的 sidecar）；
+/// 5. 系统 `PATH` 环境变量中的各个目录。
 ///
 /// 返回第一个实际存在的可执行文件路径；全部未命中时返回带提示的错误。
-pub fn locate(configured: Option<&str>) -> Result<PathBuf, String> {
+pub fn locate(configured: Option<&str>, bundled: Option<&Path>) -> Result<PathBuf, String> {
     let mut candidates: Vec<PathBuf> = Vec::new();
 
     if let Some(p) = configured {
@@ -32,6 +33,9 @@ pub fn locate(configured: Option<&str>) -> Result<PathBuf, String> {
         if !env_path.trim().is_empty() {
             candidates.push(PathBuf::from(env_path));
         }
+    }
+    if let Some(b) = bundled {
+        candidates.push(b.to_path_buf());
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
@@ -54,8 +58,9 @@ pub fn locate(configured: Option<&str>) -> Result<PathBuf, String> {
         }
     }
     Err(
-        "未找到 ark_disasm。请在设置中配置官方 ark_disasm 路径，\
-         或将其放入应用目录 / PATH 环境变量。"
+        "未找到 ark_disasm。请将官方二进制放入应用资源目录 \
+         （resources/bin/<windows|macos|linux>/），\
+         或在设置中配置 ark_disasm 路径。"
             .into(),
     )
 }
@@ -67,6 +72,40 @@ fn exe_names() -> [&'static str; 2] {
     } else {
         ["ark_disasm", "ark_disasm.exe"]
     }
+}
+
+/// 执行 `ark_disasm --version` 并返回版本文本。
+///
+/// 用于切换反编译器前的可执行性校验与设置页的版本信息展示。
+/// stdout 为空时回退读取 stderr。
+///
+/// 注意：部分版本的 `ark_disasm` 打印版本信息后仍返回非零退出码，
+/// 因此只要输出内容形如版本信息即视为成功；仅当无输出或输出明显
+/// 不是版本信息时才判定失败。
+pub fn run_version(tool: &Path) -> Result<String, String> {
+    let output = Command::new(tool)
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("启动 ark_disasm 失败: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let text = if stdout.is_empty() { stderr } else { stdout };
+
+    if text.is_empty() {
+        return Err(format!(
+            "ark_disasm --version 未产生输出 (exit {:?})",
+            output.status.code()
+        ));
+    }
+    if !output.status.success() && !text.to_lowercase().contains("version") {
+        return Err(format!(
+            "ark_disasm --version 执行失败 (exit {:?}): {}",
+            output.status.code(),
+            &text
+        ));
+    }
+    Ok(text)
 }
 
 /// 反编译并尝试附带字面量池 dump，返回 `(pa 全文, 名称表)`。

@@ -180,11 +180,22 @@ export const api = {
 
   /**
    * 配置官方 `ark_disasm` 可执行文件路径。
-   * @param path 完整路径；`null` / 空串表示清除配置、回退自动探测
+   *
+   * 保存前后端会对目标二进制执行 `--version` 校验，失败时返回错误且不保存。
+   * @param path 完整路径；`null` / 空串表示清除配置、回退自动探测（含内置副本）
    * @returns 是否配置成功
    */
   setDisassemblerPath(path: string | null): Promise<boolean> {
     return invoke<boolean>("set_disassembler_path", { path })
+  },
+
+  /**
+   * 获取 `ark_disasm` 的版本信息（执行 `--version`）。
+   * @param path 指定的可执行文件路径；`null` / 空串时按自动探测顺序定位（含内置副本）
+   * @returns 版本命令的多行文本输出
+   */
+  disassemblerVersion(path: string | null): Promise<string> {
+    return invoke<string>("disassembler_version", { path })
   },
 
   /**

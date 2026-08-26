@@ -8,7 +8,7 @@
  * 「反编译器」分区承载 `ark_disasm` 可执行文件路径配置，
  * 保存时同步给后端校验并持久化，供打开项目时使用。
  */
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { getVersion } from "@tauri-apps/api/app"
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 import { openUrl } from "@tauri-apps/plugin-opener"
@@ -167,7 +167,7 @@ function AppearanceSection() {
   )
 }
 
-/** 反编译器分区：`ark_disasm` 可执行文件路径配置。 */
+/** 反编译器分区：`ark_disasm` 可执行文件路径配置与版本信息。 */
 function DecompilerSection() {
   /** 已保存的 `ark_disasm` 路径（持久化，与工作台打开项目时读取的键一致）。 */
   const [toolPath, setToolPath, , toolPathLoaded] = usePersistentState<string>("disassembler-path", "")
@@ -175,6 +175,12 @@ function DecompilerSection() {
   const [draft, setDraft] = useState("")
   /** 是否正在保存（等待后端校验）。 */
   const [isSaving, setIsSaving] = useState(false)
+  /** 当前展示的版本信息文本（`--version` 输出）。 */
+  const [versionInfo, setVersionInfo] = useState<string | null>(null)
+  /** 版本信息获取失败的错误信息。 */
+  const [versionError, setVersionError] = useState<string | null>(null)
+  /** 是否正在获取版本信息。 */
+  const [isLoadingVersion, setIsLoadingVersion] = useState(false)
 
   useEffect(() => {
     if (toolPathLoaded) setDraft(toolPath)
@@ -182,20 +188,45 @@ function DecompilerSection() {
 
   const isDirty = toolPathLoaded && draft.trim() !== toolPath.trim()
 
+  /**
+   * 拉取指定路径（空串表示自动探测）的 `ark_disasm` 版本信息。
+   * 失败时不打断页面，仅在版本区域展示错误。
+   * @param path 候选可执行文件路径；空串表示按探测顺序定位
+   */
+  const refreshVersion = useCallback(async (path: string) => {
+    setIsLoadingVersion(true)
+    try {
+      const text = await api.disassemblerVersion(path.trim() || null)
+      setVersionInfo(text)
+      setVersionError(null)
+    } catch (e) {
+      setVersionInfo(null)
+      setVersionError(String(e))
+    } finally {
+      setIsLoadingVersion(false)
+    }
+  }, [])
+
+  // 已保存路径变化（初次加载 / 保存 / 重置）时同步刷新版本信息
+  useEffect(() => {
+    if (toolPathLoaded) void refreshVersion(toolPath)
+  }, [toolPath, toolPathLoaded, refreshVersion])
+
   /** 弹出原生文件选择框，选择 `ark_disasm` 可执行文件。 */
   const browse = async () => {
     const selected = await openFileDialog({ multiple: false, directory: false })
     if (typeof selected === "string") setDraft(selected)
   }
 
-  /** 校验并保存路径；留空表示清除配置、回退自动探测。 */
+  /** 校验并保存路径；留空表示清除配置、回退自动探测。后端执行
+   * `--version` 校验失败时会返回错误，此时保持原配置不变。 */
   const save = async () => {
     const value = draft.trim()
     setIsSaving(true)
     try {
       await api.setDisassemblerPath(value || null)
     } catch (e) {
-      addToast({ title: "ark_disasm 不可用", description: String(e), severity: "danger" })
+      addToast({ title: "ark_disasm 不可用，已保留原配置", description: String(e), severity: "danger" })
       setIsSaving(false)
       return
     }
@@ -203,9 +234,25 @@ function DecompilerSection() {
     setToolPath(value)
     addToast({
       title: "设置已保存",
-      description: value || "将自动在应用目录与 PATH 中查找 ark_disasm",
+      description: value || "未配置时将优先使用应用内置的 ark_disasm",
       severity: "success",
     })
+  }
+
+  /** 清除手动配置，回退到应用内置的 ark_disasm（同样经过后端校验）。 */
+  const reset = async () => {
+    setIsSaving(true)
+    try {
+      await api.setDisassemblerPath(null)
+    } catch (e) {
+      addToast({ title: "重置失败，已保留原配置", description: String(e), severity: "danger" })
+      setIsSaving(false)
+      return
+    }
+    setIsSaving(false)
+    setDraft("")
+    setToolPath("")
+    addToast({ title: "已重置", description: "将使用应用内置的 ark_disasm", severity: "success" })
   }
 
   return (
@@ -216,36 +263,71 @@ function DecompilerSection() {
         description="配置用于反编译 Ark 字节码的外部工具。"
       />
       <div className="divide-y divide-default-200 px-5">
-        <div className="flex flex-wrap items-center justify-between gap-4 py-4">
-          <div className="flex min-w-0 items-start gap-3">
+        <div className="py-4">
+          <div className="flex items-start gap-3">
             <FileCode2 className="mt-0.5 h-4 w-4 shrink-0 text-default-400" />
             <div className="min-w-0">
               <div className="text-sm font-medium text-foreground">ark_disasm 路径</div>
               <p className="mt-1 max-w-xl text-xs leading-5 text-default-400">
                 Hark 调用 OpenHarmony 官方 <code className="rounded bg-default-100 px-1">ark_disasm</code>{" "}
-                工具反编译字节码。填写其可执行文件的完整路径；留空则自动在应用目录与 PATH 中查找。
+                工具反编译字节码。应用已内置各平台的 ark_disasm，通常无需配置；如需指定其他版本，
+                可填写其可执行文件的完整路径（随 DevEco Studio 安装）：
               </p>
+              <div className="mt-1.5 max-w-xl space-y-1 text-xs leading-5 text-default-400">
+                <div>
+                  <span className="inline-block w-16 shrink-0">Windows</span>
+                  <code className="rounded bg-default-100 px-1">
+                    DevEco Studio\sdk\default\openharmony\toolchains\ark_disasm.exe
+                  </code>
+                </div>
+                <div>
+                  <span className="inline-block w-16 shrink-0">macOS</span>
+                  <code className="rounded bg-default-100 px-1">
+                    /Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/ark_disasm
+                  </code>
+                </div>
+              </div>
             </div>
           </div>
-          <div className="flex w-full max-w-md flex-col gap-2 sm:w-auto sm:min-w-80">
+          <div className="mt-3 flex items-center gap-2 pl-7">
             <Input
+              className="flex-1"
               placeholder="C:\\tools\\ark_disasm.exe"
               value={draft}
               onValueChange={setDraft}
               isDisabled={!toolPathLoaded}
             />
-            <div className="flex items-center justify-end gap-2">
-              <Button
-                size="sm"
-                variant="bordered"
-                startContent={<FolderOpen className="h-3.5 w-3.5" />}
-                onPress={() => void browse()}
-              >
-                浏览…
-              </Button>
-              <Button size="sm" color="primary" isDisabled={!isDirty} isLoading={isSaving} onPress={() => void save()}>
-                保存
-              </Button>
+            <Button
+              variant="bordered"
+              startContent={<FolderOpen className="h-3.5 w-3.5" />}
+              onPress={() => void browse()}
+            >
+              浏览…
+            </Button>
+            <Button color="primary" isDisabled={!isDirty} isLoading={isSaving} onPress={() => void save()}>
+              保存
+            </Button>
+            <Button
+              variant="light"
+              isDisabled={!toolPathLoaded || (!toolPath && !draft)}
+              isLoading={isSaving}
+              onPress={() => void reset()}
+            >
+              重置
+            </Button>
+          </div>
+          <div className="mt-4 pl-7">
+            <div className="text-xs font-medium text-default-500">版本信息</div>
+            <div className="mt-1.5 max-w-xl">
+              {isLoadingVersion ? (
+                <p className="text-xs leading-5 text-default-400">正在获取版本信息…</p>
+              ) : versionInfo ? (
+                <pre className="overflow-x-auto rounded-lg bg-default-50 px-3 py-2 font-mono text-[11px] leading-5 whitespace-pre-wrap text-default-600 dark:bg-white/5 dark:text-default-400">
+                  {versionInfo}
+                </pre>
+              ) : (
+                <p className="text-xs leading-5 text-danger">{versionError ?? "尚未获取版本信息"}</p>
+              )}
             </div>
           </div>
         </div>

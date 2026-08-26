@@ -6,7 +6,9 @@
 //! - [`get_content`]：按节点 ID 获取内容切片（支持 abc / ets 双视图）；
 //! - [`export_node_ets`]：把节点的 ArkTS 还原结果导出为文件；
 //! - [`close_project`]：关闭当前项目；
-//! - [`set_disassembler_path`]：配置官方 `ark_disasm` 路径；
+//! - [`set_disassembler_path`]：配置官方 `ark_disasm` 路径（保存前执行
+//!   `--version` 校验）；
+//! - [`disassembler_version`]：获取 `ark_disasm` 版本信息；
 //! - [`search_project`]：全局多类别搜索（类 / 方法 / 字段 / 字符串 / 代码 / 资源）。
 
 pub mod decompiler;
@@ -16,6 +18,7 @@ mod project;
 mod runner;
 pub mod search;
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
@@ -29,6 +32,9 @@ struct AppState {
     project: Mutex<Option<Project>>,
     /// 用户配置的 `ark_disasm` 路径；`None` 表示自动探测。
     tool_path: Mutex<Option<String>>,
+    /// 随应用分发的内置 `ark_disasm` 完整路径（资源目录下按平台子目录定位）；
+    /// 启动时解析一次。资源解析失败时为 `None`（仅影响探测候选，不致命）。
+    bundled_tool: Mutex<Option<PathBuf>>,
     /// 搜索代次计数器：每次发起新搜索递增，旧搜索据此自行终止。
     search_generation: AtomicU64,
 }
@@ -39,9 +45,36 @@ impl AppState {
         AppState {
             project: Mutex::new(None),
             tool_path: Mutex::new(None),
+            bundled_tool: Mutex::new(None),
             search_generation: AtomicU64::new(0),
         }
     }
+}
+
+/// 解析随应用分发的内置 `ark_disasm` 路径。
+///
+/// 资源目录布局固定为 `resources/bin/<平台>/<可执行名>`：
+/// - Windows: `resources/bin/windows/ark_disasm.exe`
+/// - macOS / Linux: `resources/bin/{macos|linux}/ark_disasm`
+///
+/// 开发模式下资源目录即 `src-tauri`，与打包后的安装布局一致，
+/// 因此开发与生产使用同一相对路径。解析失败时返回 `None`。
+fn resolve_bundled_tool(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let platform = if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
+    let exe = if cfg!(windows) {
+        "ark_disasm.exe"
+    } else {
+        "ark_disasm"
+    };
+    app.path()
+        .resolve(format!("resources/bin/{platform}/{exe}"), tauri::path::BaseDirectory::Resource)
+        .ok()
 }
 
 /// [`open_project`] 的返回值：项目树 + 可选的 `.hark` 会话元数据。
@@ -84,7 +117,8 @@ fn open_project(path: String, state: State<AppState>) -> Result<OpenProjectResul
     }
 
     let configured = state.tool_path.lock().unwrap().clone();
-    let p = Project::open(&open_path, configured.as_deref())?;
+    let bundled = state.bundled_tool.lock().unwrap().clone();
+    let p = Project::open(&open_path, configured.as_deref(), bundled.as_deref())?;
     let tree = p.tree().clone();
     *state.project.lock().unwrap() = Some(p);
     Ok(OpenProjectResult { tree, session })
@@ -165,25 +199,57 @@ fn export_node_ets(node_id: u32, path: String, state: State<AppState>) -> Result
 
 /// 配置官方 `ark_disasm` 可执行文件路径。
 ///
-/// - 传入 `Some(path)`：校验路径可用后保存；
-/// - 传入 `None` / 空串：清除配置并回退到自动探测（探测失败会报错）。
+/// - 传入 `Some(path)`：要求该路径指向实际存在的文件，并执行
+///   `--version` 验证可运行；任一环节失败则返回错误、**不保存**；
+/// - 传入 `None` / 空串：清除配置并回退到自动探测（含内置副本），
+///   探测结果同样必须通过 `--version` 校验。
 ///
 /// 返回 `Ok(true)` 表示配置生效。
 #[tauri::command]
 fn set_disassembler_path(path: Option<String>, state: State<AppState>) -> Result<bool, String> {
+    let bundled = state.bundled_tool.lock().unwrap().clone();
     match &path {
         Some(p) if !p.trim().is_empty() => {
-            let resolved = runner::locate(Some(p))?;
-            *state.tool_path.lock().unwrap() = Some(resolved.to_string_lossy().to_string());
+            let candidate = PathBuf::from(p.trim());
+            if !candidate.is_file() {
+                return Err(format!("文件不存在: {}", candidate.display()));
+            }
+            // 切换反编译器前先验证可执行性，失败则保持原配置不变
+            runner::run_version(&candidate)?;
+            *state.tool_path.lock().unwrap() = Some(candidate.to_string_lossy().to_string());
         }
         _ => {
-            // 清除配置并验证自动探测仍然可用
-            let resolved = runner::locate(None)?;
+            // 清除配置：自动探测（内置副本 → exe 目录 → PATH）必须可用且通过校验
+            let tool = runner::locate(None, bundled.as_deref())?;
+            runner::run_version(&tool)?;
             *state.tool_path.lock().unwrap() = None;
-            let _ = resolved;
         }
     }
     Ok(true)
+}
+
+/// 获取 `ark_disasm` 的版本信息（对其执行 `--version`）。
+///
+/// - 传入 `Some(path)`：直接对指定路径的二进制执行；
+/// - 传入 `None` / 空串：按自动探测顺序（环境变量 → 内置副本 →
+///   exe 目录 → PATH）定位后执行，用于展示当前生效工具的版本。
+///
+/// # Errors
+/// 文件不存在、启动失败或 `--version` 执行失败时返回中文错误信息。
+#[tauri::command]
+fn disassembler_version(path: Option<String>, state: State<AppState>) -> Result<String, String> {
+    let bundled = state.bundled_tool.lock().unwrap().clone();
+    let tool = match path.as_deref().map(str::trim) {
+        Some(p) if !p.is_empty() => {
+            let candidate = PathBuf::from(p);
+            if !candidate.is_file() {
+                return Err(format!("文件不存在: {}", candidate.display()));
+            }
+            candidate
+        }
+        _ => runner::locate(None, bundled.as_deref())?,
+    };
+    runner::run_version(&tool)
 }
 
 /// 全局搜索当前打开的项目（后台线程执行，避免阻塞主线程）。
@@ -220,6 +286,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::new())
+        .setup(|app| {
+            // 启动时解析一次内置 ark_disasm 的资源路径，供所有命令共享
+            let bundled = resolve_bundled_tool(app.handle());
+            *app.state::<AppState>().bundled_tool.lock().unwrap() = bundled;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             open_project,
             save_project_hark,
@@ -227,6 +299,7 @@ pub fn run() {
             get_content,
             export_node_ets,
             set_disassembler_path,
+            disassembler_version,
             search_project
         ])
         .run(tauri::generate_context!())

@@ -61,7 +61,7 @@ function App() {
 
       {/* 工作台：切到设置页时隐藏但保持挂载，保留标签与项目现场 */}
       <div className={view === "workspace" ? "flex min-h-0 flex-1 overflow-hidden" : "hidden"}>
-        <Workspace isSidebarCollapsed={isSidebarCollapsed} onNavigate={handleNavigate} />
+        <Workspace isSidebarCollapsed={isSidebarCollapsed} />
       </div>
 
       {view === "settings" && (

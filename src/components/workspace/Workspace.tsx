@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog"
 import { getCurrentWebview } from "@tauri-apps/api/webview"
-import { Download, FileCode2, FolderOpen, FolderTree, LoaderCircle, Search, Settings2 } from "lucide-react"
+import { Download, FileCode2, FolderOpen, FolderTree, LoaderCircle, Search } from "lucide-react"
 import { ChevronsDownUp, ChevronsUpDown } from "lucide-react"
 import { Button, addToast } from "../ui/base-ui"
 import { usePersistentState } from "../../hooks/usePersistentState"
@@ -34,7 +34,6 @@ import {
   type TreeNode,
   type ViewKind,
 } from "../../lib/api"
-import type { ToolId } from "../../lib/navigation"
 import { ProjectTree, type TreeCommand } from "./ProjectTree"
 import { EditorTabs, type EditorTab } from "./EditorTabs"
 import { CodeView } from "./CodeView"
@@ -56,8 +55,6 @@ const HARK_FILTERS = [{ name: "Hark 工作区", extensions: ["hark"] }]
 interface WorkspaceProps {
   /** 项目树侧栏是否收起（状态由 App 持有并持久化，标题栏按钮切换）。 */
   isSidebarCollapsed: boolean
-  /** 页面导航（如跳转到设置页的指定分区）。 */
-  onNavigate?: (toolId: ToolId, tabId?: string) => void
 }
 
 /** 单个标签的完整状态：标签信息 + 双视图内容缓存。 */
@@ -114,7 +111,7 @@ async function readStoredToolPath(): Promise<string> {
  * 有项目时左侧渲染项目树，右侧按标签状态（加载中 / 出错 / 有内容）
  * 渲染对应视图。
  */
-export function Workspace({ isSidebarCollapsed, onNavigate }: WorkspaceProps) {
+export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
   /** 项目树根节点；`null` 表示未打开项目 */
   const [tree, setTree] = useState<TreeNode | null>(null)
   /** 当前项目名（打开文件的文件名） */
@@ -781,19 +778,9 @@ export function Workspace({ isSidebarCollapsed, onNavigate }: WorkspaceProps) {
               }
               action={
                 !projectName && (
-                  <div className="flex gap-2">
-                    <Button color="primary" variant="solid" size="sm" onPress={() => void pickAndOpen()}>
-                      打开文件…
-                    </Button>
-                    <Button
-                      variant="bordered"
-                      size="sm"
-                      startContent={<Settings2 className="h-3.5 w-3.5" />}
-                      onPress={() => onNavigate?.("settings", "decompiler")}
-                    >
-                      反编译器设置
-                    </Button>
-                  </div>
+                  <Button color="primary" variant="solid" size="sm" onPress={() => void pickAndOpen()}>
+                    打开文件…
+                  </Button>
                 )
               }
             />
