@@ -313,13 +313,18 @@ pub enum Jump {
     Cond(Cmp, bool),
 }
 
-/// 解码跳转类操作码（`jmp` / `jeqz` / `jne v0` 等）。
+/// 解码跳转类操作码（`jmp` / `jeqz` / `jne v0` 等，兼容 `jmpeqz` 别名）。
 pub fn decode_jump(op: &str) -> Option<Jump> {
     let base = op.strip_prefix('j')?;
     let base = base.split('.').next().unwrap_or(base);
     if base == "mp" || base == "mpaddr" {
         return Some(Jump::Always);
     }
+    // `jmp<cond>` 形式的条件跳转别名（如 jmpeqz ≙ jeqz）
+    let base = match base.strip_prefix("mp") {
+        Some(rest) if !rest.is_empty() => rest,
+        _ => base,
+    };
     let (root, zero) = match base.strip_suffix('z') {
         Some(r) => (r, true),
         None => (base, false),
@@ -546,6 +551,10 @@ pub enum Kind {
     LoadProp { super_: bool },
     /// 属性写：v0.name = acc。
     StoreProp(String),
+    /// super 属性写：super.name = acc。
+    StoreSuperProp(String),
+    /// 下标写：v0[idx] = acc，idx 为寄存器或立即数。
+    IndexStore(Operand),
     /// 下标读：acc = acc[idx]，idx 为寄存器或立即数。
     IndexLoad(Operand),
     /// 读全局变量。
@@ -595,11 +604,16 @@ pub enum Kind {
 /// 把一条指令归类为语义动作。
 pub fn classify(insn: &Insn) -> Kind {
     use Kind::*;
-    let op = insn.opcode.as_str();
+    // `wide.` 前缀是位宽修饰，剥离后按基础指令分类
+    let raw_op = insn.opcode.as_str();
+    let op = raw_op.strip_prefix("wide.").unwrap_or(raw_op);
     let o = &insn.operands;
 
+    // 取操作码主干（首个 `.` 之前），用于容忍 `.64` / `.obj` 等位宽后缀
+    let base = op.split('.').next().unwrap_or(op);
+
     // mov 家族
-    if op == "mov" || op.starts_with("mov.") {
+    if base == "mov" {
         if let (Some(d), Some(s)) = (o.first().and_then(|x| x.as_reg()), o.get(1).and_then(|x| x.as_reg())) {
             return Move(d, s);
         }
@@ -610,19 +624,17 @@ pub fn classify(insn: &Insn) -> Kind {
         }
     }
 
-    // 累加器加载 / 存储
-    match op {
-        // `lda vN` 加载寄存器；`lda.str` / `ldai` / `fldai` 的操作数本身就是字面量
-        "lda" | "lda.str" | "ldai" | "fldai" => {
-            return LoadAcc(o.first().cloned().unwrap_or(Operand::Undefined))
-        }
-        "ldanull" | "lda.null" => return LoadAcc(Operand::Null),
+    // 累加器加载 / 存储（base 匹配自动覆盖 lda.str / ldai.64 / fldai.64 等后缀变体）
+    match base {
+        "lda" => return LoadAcc(o.first().cloned().unwrap_or(Operand::Undefined)),
+        "ldai" | "fldai" => return LoadAcc(o.first().cloned().unwrap_or(Operand::Undefined)),
+        "ldanull" | "ldnull" => return LoadAcc(Operand::Null),
         "ldundefined" => return LoadAcc(Operand::Undefined),
         "ldtrue" => return LoadAcc(Operand::Bool(true)),
         "ldfalse" => return LoadAcc(Operand::Bool(false)),
         "ldnan" => return LoadAcc(Operand::Float(f64::NAN)),
         "ldinfinity" => return LoadAcc(Operand::Float(f64::INFINITY)),
-        "sta" | "sta.64" | "sta.obj" => {
+        "sta" => {
             if let Some(d) = o.first().and_then(|x| x.as_reg()) {
                 return StoreAcc(d);
             }
@@ -660,15 +672,26 @@ pub fn classify(insn: &Insn) -> Kind {
     }
 
     // 属性访问
-    if op.starts_with("ldobjbyname") || op.starts_with("getpropbyname") {
+    if op.starts_with("ldobjbyname") || op.starts_with("getpropbyname") || op.starts_with("ldobjbynamelazybuiltin") {
         return LoadProp { super_: false };
     }
     if op.starts_with("ldsuperbyname") {
         return LoadProp { super_: true };
     }
-    if op.starts_with("stobjbyname") || op.starts_with("stownbyname") || op.starts_with("definefieldbyname") {
+    if op.starts_with("stobjbyname")
+        || op.starts_with("stownbyname")
+        || op.starts_with("stobjbynamelazybuiltin")
+        || op.starts_with("stownbynamelazybuiltin")
+        || op.starts_with("definefieldbyname")
+    {
         if let Some(name) = o.iter().find_map(|x| x.as_str()) {
             return StoreProp(name.to_string());
+        }
+        return Other;
+    }
+    if op.starts_with("stsuperbyname") || op.starts_with("stownsuperbyname") {
+        if let Some(name) = o.iter().find_map(|x| x.as_str()) {
+            return StoreSuperProp(name.to_string());
         }
         return Other;
     }
@@ -682,23 +705,54 @@ pub fn classify(insn: &Insn) -> Kind {
             return IndexLoad(idx);
         }
     }
+    // 下标写：对象隐含在 v0
+    if op.starts_with("stobjbyvalue") || op.starts_with("stownbyvalue") {
+        if let Some(idx) = o.first() {
+            return IndexStore(idx.clone());
+        }
+    }
+    if op.starts_with("stobjbyindex") || op.starts_with("stownbyindex") {
+        if let Some(idx) = o.get(1).cloned().or_else(|| o.first().cloned()) {
+            return IndexStore(idx);
+        }
+    }
 
     // 全局 / 模块变量
-    if op.starts_with("ldglobalvar") || op.starts_with("tryldglobalname") || op.starts_with("tryldglobalvalue")
-        || op.starts_with("ldexternalobjvar") {
+    if op.starts_with("ldglobalvar")
+        || op.starts_with("tryldglobalbyname")
+        || op.starts_with("tryldglobalvalue")
+        || op.starts_with("ldexternalobjvar")
+    {
         if let Some(name) = o.iter().find_map(|x| x.as_str()) {
             return LoadGlobal(name.to_string());
         }
         return Other;
     }
-    if op.starts_with("stglobalvar") || op.starts_with("stglobal") {
+    if op.starts_with("trystglobalbyname") || op.starts_with("stglobalvar") || op.starts_with("stglobal") {
         if let Some(name) = o.iter().find_map(|x| x.as_str()) {
             return StoreGlobal(name.to_string());
         }
         return Other;
     }
+    // 模块命名空间（import * as ns 的底层形态）
+    if op.starts_with("getmodulenamespace")
+        || op.starts_with("tryldmodulenamespace")
+        || op.starts_with("ldmodulenamespace")
+    {
+        if let Some(id) = o.first().and_then(|x| x.as_imm()) {
+            return LoadModule(id);
+        }
+        return Other;
+    }
+    if op.starts_with("stmodulenamespace") || op.starts_with("setmodulenamespace") {
+        if let Some(id) = o.first().and_then(|x| x.as_imm()) {
+            return StoreModule(id);
+        }
+        return Other;
+    }
     if op.starts_with("ldmodulevar") || op.starts_with("ldexternalmodulevar") || op.starts_with("tryldmodulevar")
-        || op.starts_with("ldlocalmodulevar") {
+        || op.starts_with("ldlocalmodulevar")
+    {
         if let Some(id) = o.first().and_then(|x| x.as_imm()) {
             return LoadModule(id);
         }
@@ -709,6 +763,11 @@ pub fn classify(insn: &Insn) -> Kind {
             return StoreModule(id);
         }
         return Other;
+    }
+
+    // 字符串拼接：strconcat v1, v2 → acc = v1 + v2
+    if base == "strconcat" {
+        return AluAcc2(AluOp::Add);
     }
 
     // 调用
@@ -770,29 +829,41 @@ pub fn classify(insn: &Insn) -> Kind {
     }
 
     // 控制流终止
-    if op == "throw" {
+    if base == "throw" {
         return Throw;
     }
-    if op == "return" || op == "return.64" {
+    if base == "return" {
         return Ret(RetKind::Value);
     }
-    if op == "returnundefined" {
+    if base == "returnundefined" {
         return Ret(RetKind::Undefined);
     }
-    if op == "returnobject" {
+    if base == "returnobject" {
         return Ret(RetKind::Object);
     }
 
     // 异步
-    if op.starts_with("asyncfunctionenter") || op.starts_with("asyncfunctionreject")
-        || op.starts_with("asyncfunctionresolve") || op.starts_with("asyncgenerator") {
+    if op.starts_with("asyncfunctionenter")
+        || op.starts_with("asyncfunctionreject")
+        || op.starts_with("asyncfunctionresolve")
+        || op.starts_with("asyncfunctionexit")
+        || op.starts_with("asyncgenerator")
+        || op.starts_with("suspendgenerator")
+        || op.starts_with("resumegenerator")
+    {
         return Async;
     }
-    if op.starts_with("awaitresult") || op.starts_with("awaitshort") || op == "await" {
+    if op.starts_with("awaitresult")
+        || op.starts_with("awaitshort")
+        || op.starts_with("awaitcompletion")
+        || op.starts_with("asyncfunctionawait")
+        || op == "await"
+    {
         return Await;
     }
 
-    if op == "nop" {
+    // 无语义影响的指令（debugger 语句等）
+    if op == "nop" || op == "debugger" || op == "setrequiredmemory" {
         return Nop;
     }
     Other
@@ -938,5 +1009,140 @@ mod tests {
         let m = build_label_map(&lines);
         assert_eq!(m["L0001"], 2);
         assert_eq!(m["L0002"], 2);
+    }
+
+    // ---------- 指令覆盖统计 ----------
+    //
+    // 维护一份 ark_disasm 对 ArkTS 程序实际会产出的代表性指令词汇表，
+    // 断言其中不应落入 Other（原始汇编兜底）的指令都被正确分类。
+    // 新增分类能力后请把指令从 UNHANDLED 移到 HANDLED。
+
+    /// 已还原（非 Other）的指令清单。
+    const HANDLED: &[&str] = &[
+        // 寄存器与累加器
+        "mov", "mov.64", "movi", "movi.64", "lda", "sta", "sta.64",
+        "ldai", "fldai", "lda.str", "ldanull", "ldundefined",
+        "ldtrue", "ldfalse", "ldnan", "ldinfinity",
+        // 算术 / 位运算
+        "add2", "sub2", "mul2", "div2", "mod2", "and2", "or2", "xor2",
+        "shl2", "shr2", "ashr2", "addi", "subi", "muli", "divi", "modi",
+        "inc", "dec", "neg", "not", "strconcat",
+        // 比较
+        "eq", "ne", "not_eq", "lt", "gt", "le", "ge",
+        "strict_eq", "strict_not_eq",
+        // 跳转
+        "jmp", "jmpaddr", "jeqz", "jnez", "jmpeqz", "jeq", "jne",
+        "jlt", "jgt", "jle", "jge", "jsteq", "jstnoteq",
+        // 属性访问
+        "ldobjbyname", "ldobjbynamelazybuiltin", "stobjbyname",
+        "stownbyname", "stobjbynamelazybuiltin", "stownbynamelazybuiltin",
+        "definefieldbyname", "getpropbyname", "ldsuperbyname",
+        "stsuperbyname", "ldobjbyvalue", "stobjbyvalue",
+        "stownbyvalue", "ldobjbyindex", "stobjbyindex", "stownbyindex",
+        // 全局 / 模块
+        "ldglobalvar", "stglobalvar", "tryldglobalbyname",
+        "trystglobalbyname", "tryldglobalvalue",
+        "ldmodulevar", "stmodulevar", "ldexternalmodulevar",
+        "ldlocalmodulevar", "tryldmodulevar",
+        "getmodulenamespace", "tryldmodulenamespace", "stmodulenamespace",
+        // 调用
+        "callarg0", "callarg1", "callarg2", "callarg3",
+        "callthis0", "callthis1", "callthis2", "callthis3",
+        "callrange", "callthisrange",
+        "supercallarg0", "supercallrange", "supercallthisrange",
+        // 对象 / 类
+        "newobj", "newobjrange", "createemptyobject", "createemptyarray",
+        "createarraywithbuffer", "createobjectwithbuffer",
+        "defineclassbyname", "defineclasswithbuffer",
+        // 词法环境
+        "newlexenv", "newlexenvwithscope", "poplexenv", "stlexvar", "ldlexvar",
+        // 控制流终止 / 异常
+        "throw", "return", "return.64", "returnundefined", "returnobject",
+        // 异步
+        "asyncfunctionenter", "asyncfunctionreject", "asyncfunctionresolve",
+        "asyncfunctionexit", "suspendgenerator", "resumegenerator",
+        "awaitresult", "awaitshort", "awaitcompletion",
+        // 其他
+        "nop", "debugger", "setrequiredmemory",
+        "wide.mov", "wide.ldobjbyindex",
+    ];
+
+    /// 尚未还原、落入原始汇编兜底的指令清单（按类别分组，供后续迭代）。
+    const UNHANDLED: &[&str] = &[
+        // 私有属性（混淆产物）
+        "ldprivateproperty", "stprivateproperty",
+        // getter/setter 定义
+        "definepropertybyname", "definegettersetterbyvalue",
+        // 数据展开 / 属性复制
+        "copydataproperties", "spreadarr",
+        // 动态导入
+        "dynamicimport",
+        // 类型检查
+        "isinstanceofimm", "checkisinstanceofbyid",
+        // 受控抛出
+        "throwconstpatternnotmatch", "throwundefinedifhole",
+        // BigInt 与杂项
+        "ldbigint", "waitforfinish",
+    ];
+
+    #[test]
+    fn coverage_report_handled_vs_unhandled() {
+        // 按指令族生成合法操作数，保证分类逻辑能走到对应分支
+        let args_of = |name: &str| -> String {
+            let bare = name.strip_prefix("wide.").unwrap_or(name);
+            let root = bare.split('.').next().unwrap_or(bare);
+            if root == "mov" {
+                "v0, v1".to_string()
+            } else if root.starts_with("movi") {
+                "v0, 0x1".to_string()
+            } else if root == "sta" {
+                "v1".to_string()
+            } else if matches!(root, "addi" | "subi" | "muli" | "divi" | "modi" | "inc" | "dec") {
+                // 就地复合赋值：寄存器在前、立即数在后
+                "v1, 0x2".to_string()
+            } else if root.starts_with('j') {
+                "L0001".to_string()
+            } else if bare.starts_with("stobjbyname")
+                || bare.starts_with("stownbyname")
+                || bare.starts_with("stobjbynamelazybuiltin")
+                || bare.starts_with("stownbynamelazybuiltin")
+                || bare.starts_with("definefieldbyname")
+                || bare.starts_with("stsuperbyname")
+            {
+                "0x0, \"prop\"".to_string()
+            } else if bare.starts_with("ldobjbyvalue")
+                || bare.starts_with("stobjbyvalue")
+                || bare.starts_with("stownbyvalue")
+            {
+                "v2".to_string()
+            } else if bare.starts_with("ldglobalvar")
+                || bare.starts_with("tryldglobal")
+                || bare.starts_with("trystglobal")
+                || bare.starts_with("stglobalvar")
+                || bare.starts_with("stglobal")
+            {
+                "0x0, \"g\"".to_string()
+            } else {
+                "0x0, v1".to_string()
+            }
+        };
+
+        let mut report = String::from("==== 字节码指令覆盖统计 ====\n");
+        for name in HANDLED {
+            let insn = parse_line(&format!("\t{} {}\n", name, args_of(name)));
+            if matches!(classify(insn_of(&insn)), Kind::Other) {
+                panic!("指令 {name} 预期已还原，但分类为 Other");
+            }
+        }
+        for name in UNHANDLED {
+            let insn = parse_line(&format!("\t{} {}\n", name, args_of(name)));
+            assert!(
+                matches!(classify(insn_of(&insn)), Kind::Other),
+                "指令 {name} 预期未还原，但已被分类"
+            );
+        }
+        report.push_str(&format!("已还原: {} 条\n", HANDLED.len()));
+        report.push_str(&format!("未还原(兜底): {} 条\n", UNHANDLED.len()));
+        println!("{report}");
     }
 }

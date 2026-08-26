@@ -702,6 +702,29 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
             });
             return StepResult::Normal;
         }
+        Kind::StoreSuperProp(name) => {
+            let val = st.take_acc();
+            flush!();
+            out.push(Stmt::Assign {
+                lhs: Expr::Prop(Box::new(Expr::Ident("super".into())), name, false),
+                expr: val,
+            });
+            return StepResult::Normal;
+        }
+        Kind::IndexStore(idx_op) => {
+            let obj = st.read_reg(0);
+            let idx = match idx_op {
+                Operand::Reg(r) => st.read_reg(r),
+                other => literal_expr(&other),
+            };
+            let val = st.take_acc();
+            flush!();
+            out.push(Stmt::Assign {
+                lhs: Expr::Index(Box::new(obj), Box::new(idx)),
+                expr: val,
+            });
+            return StepResult::Normal;
+        }
         Kind::IndexLoad(idx_op) => {
             let base = st.take_acc();
             let idx = match idx_op {
