@@ -72,6 +72,9 @@ export function Workspace() {
   const [busyMessage, setBusyMessage] = useState<string | null>(null)
   /** 已打开的标签列表 */
   const [tabs, setTabs] = useState<TabEntry[]>([])
+  /** 标签列表的最新快照（供回调同步读取，避免 updater 异步执行导致的旧值） */
+  const tabsRef = useRef(tabs)
+  tabsRef.current = tabs
   /** 激活标签的 key */
   const [activeKey, setActiveKey] = useState<string | undefined>()
   /** 侧栏宽度（持久化） */
@@ -264,12 +267,9 @@ export function Workspace() {
    */
   const switchView = useCallback(
     (tabKey: string, view: ViewKind) => {
-      let target: TabEntry | undefined
-      setTabs(prev => {
-        target = prev.find(entry => entry.tab.key === tabKey)
-        return prev.map(entry => (entry.tab.key === tabKey ? { ...entry, view } : entry))
-      })
+      setTabs(prev => prev.map(entry => (entry.tab.key === tabKey ? { ...entry, view } : entry)))
       setActiveKey(tabKey)
+      const target = tabsRef.current.find(entry => entry.tab.key === tabKey)
       if (target && !target.contents[view] && !target.loading[view]) {
         loadView(tabKey, target.tab.nodeId, view)
       }
