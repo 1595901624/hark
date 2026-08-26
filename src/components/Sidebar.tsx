@@ -127,7 +127,7 @@ export function Sidebar({ macOSOverlay = false, isCollapsed, activeTool, activeT
             <span>首页</span>
           </Button>
           <div className="flex shrink-0 items-center gap-0.5">
-            <SidebarIcon label="搜索" onClick={() => window.dispatchEvent(new Event("abcde:open-search"))}><Search className="h-[15px] w-[15px]" /></SidebarIcon>
+            <SidebarIcon label="搜索" onClick={() => window.dispatchEvent(new Event("hark:open-search"))}><Search className="h-[15px] w-[15px]" /></SidebarIcon>
           </div>
         </div>
 

@@ -210,7 +210,7 @@ mod tests {
 
     fn sample_meta() -> HarkMeta {
         HarkMeta {
-            app: "abcde".into(),
+            app: "Hark".into(),
             app_version: "0.1.0".into(),
             saved_at_ms: 1_756_000_000_000,
             project: ProjectInfo {
@@ -231,7 +231,7 @@ mod tests {
 
     fn temp_hark(tag: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
-            "abcde-hark-test-{tag}-{}",
+            "hark-test-{tag}-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

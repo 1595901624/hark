@@ -3,7 +3,7 @@
 //! 通过环境变量启用：
 //!
 //! ```text
-//! ABCDE_REAL_PA=<modules.pa 路径> cargo test --test decompile_real_stats -- --nocapture
+//! HARK_REAL_PA=<modules.pa 路径> cargo test --test decompile_real_stats -- --nocapture
 //! ```
 //!
 //! 对文件中全部 record 执行 ArkTS 还原，统计输出中残留的
@@ -11,13 +11,13 @@
 
 use std::collections::BTreeMap;
 
-use abcde_lib::decompiler;
-use abcde_lib::pa::PaFile;
+use hark_lib::decompiler;
+use hark_lib::pa::PaFile;
 
 #[test]
 fn real_file_fallback_stats() {
-    let Ok(path) = std::env::var("ABCDE_REAL_PA") else {
-        eprintln!("real_file_fallback_stats: 未设置 ABCDE_REAL_PA，跳过");
+    let Ok(path) = std::env::var("HARK_REAL_PA") else {
+        eprintln!("real_file_fallback_stats: 未设置 HARK_REAL_PA，跳过");
         return;
     };
     let text = std::fs::read_to_string(&path).expect("读取 .pa 失败");

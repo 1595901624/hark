@@ -43,7 +43,7 @@ export default function TitleBar({ onNavigate, onToggleSidebar }: TitleBarProps)
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [isAboutOpen, setIsAboutOpen] = useState(false)
   const [activeTitleMenu, setActiveTitleMenu] = useState<TitleMenuKind | null>(null)
-  const [aboutInfo, setAboutInfo] = useState({ name: "abcde", version: "0.1.0" })
+  const [aboutInfo, setAboutInfo] = useState({ name: "Hark", version: "0.1.0" })
   const [isMaximized, setIsMaximized] = useState(false)
   const lastEditableElement = useRef<HTMLElement | null>(null)
   const [platform] = useState<DesktopPlatform>(detectDesktopPlatform)
@@ -62,12 +62,12 @@ export default function TitleBar({ onNavigate, onToggleSidebar }: TitleBarProps)
       }
     }
     window.addEventListener("keydown", handleKeyDown)
-    window.addEventListener("abcde:open-search", openSearch)
-    window.addEventListener("abcde:open-settings", openSettings)
+    window.addEventListener("hark:open-search", openSearch)
+    window.addEventListener("hark:open-settings", openSettings)
     return () => {
       window.removeEventListener("keydown", handleKeyDown)
-      window.removeEventListener("abcde:open-search", openSearch)
-      window.removeEventListener("abcde:open-settings", openSettings)
+      window.removeEventListener("hark:open-search", openSearch)
+      window.removeEventListener("hark:open-settings", openSettings)
     }
   }, [onNavigate])
 
@@ -141,13 +141,13 @@ export default function TitleBar({ onNavigate, onToggleSidebar }: TitleBarProps)
 
           <div className="flex h-full items-center gap-0.5 text-[13px]" data-tauri-drag-region>
             <DesktopTitleMenu menuKey="file" label="文件" activeMenu={activeTitleMenu} onActiveMenuChange={setActiveTitleMenu} onPointerDown={rememberEditableElement}>
-              {desktopMenuItem("open", "打开文件…", "Ctrl+O", () => window.dispatchEvent(new Event("abcde:open-file")))}
-              {desktopMenuItem("save", "保存", "Ctrl+S", () => window.dispatchEvent(new Event("abcde:save-project")))}
-              {desktopMenuItem("save-as", "另存为…", "Ctrl+Shift+S", () => window.dispatchEvent(new Event("abcde:save-project-as")))}
+              {desktopMenuItem("open", "打开文件…", "Ctrl+O", () => window.dispatchEvent(new Event("hark:open-file")))}
+              {desktopMenuItem("save", "保存", "Ctrl+S", () => window.dispatchEvent(new Event("hark:save-project")))}
+              {desktopMenuItem("save-as", "另存为…", "Ctrl+Shift+S", () => window.dispatchEvent(new Event("hark:save-project-as")))}
               <DropdownSeparator />
-              {desktopMenuItem("close-project", "关闭项目", undefined, () => window.dispatchEvent(new Event("abcde:close-project")))}
+              {desktopMenuItem("close-project", "关闭项目", undefined, () => window.dispatchEvent(new Event("hark:close-project")))}
               <DropdownSeparator />
-              {desktopMenuItem("disassembler", "反编译器设置…", undefined, () => window.dispatchEvent(new Event("abcde:configure-tool")))}
+              {desktopMenuItem("disassembler", "反编译器设置…", undefined, () => window.dispatchEvent(new Event("hark:configure-tool")))}
               {desktopMenuItem("settings", "设置", undefined, () => onNavigate?.("settings"))}
               <DropdownSeparator />
               {desktopMenuItem("quit", `退出 ${aboutInfo.name}`, "Ctrl+Q", () => void appWindow?.close())}
