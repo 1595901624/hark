@@ -122,7 +122,7 @@ export function ProjectTree({ tree, activeNodeId, onOpenNode, command, onExpande
               "group flex h-[26px] w-max min-w-full items-center gap-1 rounded-md px-1.5 text-left text-[12.5px] leading-none whitespace-nowrap transition-colors",
               node.id === activeNodeId
                 ? "bg-primary/10 font-medium text-foreground"
-                : "text-default-600 hover:bg-black/[0.045] hover:text-foreground dark:text-default-400 dark:hover:bg-white/[0.055]",
+                : "text-default-600 hover:bg-black/[0.045] hover:text-foreground dark:text-default-600 dark:hover:bg-white/[0.055]",
             )}
             style={{ paddingLeft: depth * 14 + 6 }}
             onClick={() => {

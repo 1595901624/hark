@@ -36,17 +36,17 @@
 .dark {
     color-scheme: dark;
     --background: 24 26 31;
-    --foreground: 223 227 233;
+    --foreground: 235 238 243;
     --chrome: 20 22 27;
     --content-1: 32 36 43;
     --divider: 55 61 71;
     --default-50: 32 36 43;
     --default-100: 40 45 53;
     --default-200: 55 61 71;
-    --default-300: 77 85 98;
-    --default-400: 137 146 160;
-    --default-500: 165 173 185;
-    --default-600: 196 202 211;
+    --default-300: 96 104 118;
+    --default-400: 158 166 180;
+    --default-500: 178 186 199;
+    --default-600: 206 212 221;
     --default-700: 226 230 236;
     --primary: 127 164 216;
     --primary-foreground: 17 25 35;

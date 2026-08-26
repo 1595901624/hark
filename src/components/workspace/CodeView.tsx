@@ -172,12 +172,12 @@ export function CodeView({
       ref={containerRef}
       className="flex min-h-0 flex-1 overflow-auto bg-background font-mono text-[12.5px] leading-[20px]"
     >
-      <div className="sticky left-0 z-10 shrink-0 select-none border-r border-default-200/60 bg-default-50 px-3 py-3 text-right text-default-300 dark:bg-default-50/50">
+      <div className="sticky left-0 z-10 shrink-0 select-none border-r border-default-200/60 bg-default-50 px-3 py-3 text-right text-default-300 dark:text-default-400 dark:bg-default-50/50">
         {lines.map((_, i) => (
           <div key={i}>{i + 1}</div>
         ))}
       </div>
-      <pre className="flex-1 px-4 py-3 whitespace-pre text-foreground">
+      <pre className="flex-1 px-4 py-3 whitespace-pre text-foreground dark:text-zinc-100">
         {lines.map((line, i) => (
           <div key={i} data-line={i + 1} className="min-h-[20px]">
             {renderLine(line, matchesByLine[i], lineOffsets[i])}
