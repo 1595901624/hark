@@ -4,17 +4,14 @@ import { getCurrentWindow } from "@tauri-apps/api/window"
 import { openUrl } from "@tauri-apps/plugin-opener"
 import {
   Check,
-  ChevronDown,
   ChevronRight,
   Copy,
   Minus,
   PanelLeft,
-  Search,
   Square,
   X,
 } from "lucide-react"
 import { detectDesktopPlatform, detectHostPlatform, DesktopPlatform } from "../lib/platform"
-import { CommandMenu } from "./CommandMenu"
 import { ToolId } from "../lib/navigation"
 import { useTheme } from "./theme-provider"
 import appIcon from "../assets/app-icon.svg"
@@ -40,7 +37,6 @@ interface TitleBarProps {
 
 export default function TitleBar({ onNavigate, onToggleSidebar }: TitleBarProps) {
   const { theme, setTheme } = useTheme()
-  const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [isAboutOpen, setIsAboutOpen] = useState(false)
   const [activeTitleMenu, setActiveTitleMenu] = useState<TitleMenuKind | null>(null)
   const [aboutInfo, setAboutInfo] = useState({ name: "Hark", version: "0.1.0" })
@@ -53,20 +49,9 @@ export default function TitleBar({ onNavigate, onToggleSidebar }: TitleBarProps)
   )
 
   useEffect(() => {
-    const openSearch = () => setIsSearchOpen(true)
     const openSettings = () => onNavigate?.("settings")
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault()
-        openSearch()
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown)
-    window.addEventListener("hark:open-search", openSearch)
     window.addEventListener("hark:open-settings", openSettings)
     return () => {
-      window.removeEventListener("keydown", handleKeyDown)
-      window.removeEventListener("hark:open-search", openSearch)
       window.removeEventListener("hark:open-settings", openSettings)
     }
   }, [onNavigate])
@@ -106,11 +91,6 @@ export default function TitleBar({ onNavigate, onToggleSidebar }: TitleBarProps)
 
   return (
     <>
-      <CommandMenu
-        isOpen={isSearchOpen}
-        onClose={() => setIsSearchOpen(false)}
-        onNavigate={(toolId, tabId) => onNavigate?.(toolId, tabId)}
-      />
       <AboutDialog
         isOpen={isAboutOpen}
         onClose={() => setIsAboutOpen(false)}
@@ -162,8 +142,6 @@ export default function TitleBar({ onNavigate, onToggleSidebar }: TitleBarProps)
               {desktopMenuItem("select-all", "全选", "Ctrl+A", () => runEditCommand("selectAll"))}
             </DesktopTitleMenu>
             <DesktopTitleMenu menuKey="view" label="视图" activeMenu={activeTitleMenu} onActiveMenuChange={setActiveTitleMenu} onPointerDown={rememberEditableElement}>
-              {desktopMenuItem("search", "搜索工具…", "Ctrl+K", () => setIsSearchOpen(true))}
-              <DropdownSeparator />
               {desktopMenuItem("fullscreen", "切换全屏", undefined, () => void toggleMaximize())}
               <DropdownSubmenu
                 key="theme"
@@ -185,17 +163,6 @@ export default function TitleBar({ onNavigate, onToggleSidebar }: TitleBarProps)
           </div>
 
           <div className="flex-1" data-tauri-drag-region />
-
-          <Button
-            variant="light"
-            className="mr-2 flex h-7 items-center gap-2 rounded-xl border border-black/[0.06] bg-white/70 px-3 text-[11px] text-[#666] shadow-sm hover:bg-white dark:border-white/10 dark:bg-white/5 dark:text-default-400"
-            onPress={() => setIsSearchOpen(true)}
-          >
-            <Search className="h-3.5 w-3.5" />
-            <span>搜索</span>
-            <span className="rounded border border-black/10 px-1 font-mono text-[9px] dark:border-white/10">Ctrl K</span>
-            <ChevronDown className="h-3 w-3" />
-          </Button>
 
           <div className={platform === "linux" ? "flex h-full items-center gap-1 pr-2" : "flex h-full items-stretch"}>
             <WindowButton platform={platform} label="最小化" onClick={() => appWindow?.minimize()}><Minus className="h-4 w-4" /></WindowButton>
