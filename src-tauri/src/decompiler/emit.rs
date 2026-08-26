@@ -251,9 +251,15 @@ pub fn record_to_arkts(rec: &PaRecord, names: &Names) -> String {
         let kw = if sig::is_method_async_hint(&m.body) || s.is_async_hint { "async " } else { "" };
         let stat = if s.is_static { "static " } else { "" };
         out.push_str(&format!("    {stat}{kw}{} {{\n", method_head(&s)));
-        out.push_str(&body);
-        if !body.ends_with('\n') {
-            out.push('\n');
+        // 方法体文本自带一级缩进，叠加类成员层级
+        for line in body.lines() {
+            if line.is_empty() {
+                out.push('\n');
+            } else {
+                out.push_str("    ");
+                out.push_str(line);
+                out.push('\n');
+            }
         }
         out.push_str("    }\n\n");
     }
