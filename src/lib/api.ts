@@ -147,6 +147,14 @@ export const api = {
   },
 
   /**
+   * 取消正在进行的打开项目操作。
+   * 后端抬高打开代次，使正在运行的 `Project::open` 提前终止。
+   */
+  cancelOpenProject(): Promise<void> {
+    return invoke<void>("cancel_open_project")
+  },
+
+  /**
    * 把当前项目与工作区快照保存为 `.hark` 文件。
    * @param path 目标 `.hark` 文件的绝对路径
    * @param workspace 前端整理的工作区快照（标签与激活状态）

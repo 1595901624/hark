@@ -29,7 +29,7 @@ use project::{NodeContent, Project, TreeNode};
 use serde::Serialize;
 use tauri::{Manager, State};
 
-/// 应用共享状态：当前项目 + 反编译工具路径配置 + 搜索取消代次。
+/// 应用共享状态：当前项目 + 反编译工具路径配置 + 搜索/打开取消代次。
 struct AppState {
     /// 当前打开的项目；`None` 表示未打开。
     project: Mutex<Option<Project>>,
@@ -40,6 +40,9 @@ struct AppState {
     bundled_tool: Mutex<Option<PathBuf>>,
     /// 搜索代次计数器：每次发起新搜索递增，旧搜索据此自行终止。
     search_generation: AtomicU64,
+    /// 打开项目代次计数器：每次发起新打开或取消时递增，
+    /// 正在进行的打开任务检测到代次变化即提前终止。
+    open_generation: AtomicU64,
 }
 
 impl AppState {
@@ -50,6 +53,7 @@ impl AppState {
             tool_path: Mutex::new(None),
             bundled_tool: Mutex::new(None),
             search_generation: AtomicU64::new(0),
+            open_generation: AtomicU64::new(0),
         }
     }
 }
@@ -94,11 +98,15 @@ struct OpenProjectResult {
 /// 打开 `.hark` 时先校验完整性（CRC32 + SHA-256），再加载其引用的源文件；
 /// 源文件不存在或已被移动时返回明确错误。反编译成功后替换当前项目。
 ///
+/// 重活在 `spawn_blocking` 线程执行，不阻塞 Tauri 事件循环（窗口可拖动）。
+/// 用户可通过 [`cancel_open_project`] 取消正在进行的打开。
+///
 /// # Errors
 /// 文件不存在、格式不支持、`.hark` 校验失败、`ark_disasm` 不可用或
 /// 反编译失败时，返回可直接展示给用户的中文错误信息；此时保留原项目不变。
+/// 被取消时返回 `"cancelled"`。
 #[tauri::command]
-fn open_project(path: String, state: State<AppState>) -> Result<OpenProjectResult, String> {
+async fn open_project(path: String, app: tauri::AppHandle) -> Result<OpenProjectResult, String> {
     let path = std::path::Path::new(&path);
     let ext = path
         .extension()
@@ -119,12 +127,47 @@ fn open_project(path: String, state: State<AppState>) -> Result<OpenProjectResul
         return Err(format!("源文件不存在或已被移动: {}", open_path.display()));
     }
 
+    let state = app.state::<AppState>();
     let configured = state.tool_path.lock().unwrap().clone();
     let bundled = state.bundled_tool.lock().unwrap().clone();
-    let p = Project::open(&open_path, configured.as_deref(), bundled.as_deref())?;
+    // 发起新打开：代次 +1；打开过程中检测到代次变化即提前退出
+    let my_generation = state.open_generation.fetch_add(1, Ordering::SeqCst) + 1;
+
+    let app_for_blocking = app.clone();
+    let open_path_clone = open_path.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let inner_state = app_for_blocking.state::<AppState>();
+        let is_cancelled =
+            || inner_state.open_generation.load(Ordering::SeqCst) != my_generation;
+        Project::open(
+            &open_path_clone,
+            configured.as_deref(),
+            bundled.as_deref(),
+            &is_cancelled,
+        )
+    })
+    .await
+    .map_err(|e| format!("打开任务执行失败: {e}"))?;
+
+    // 最终交换前再做一次代次检查，避免与取消/新打开竞态
+    if state.open_generation.load(Ordering::SeqCst) != my_generation {
+        return Err("cancelled".into());
+    }
+
+    let p = result?;
     let tree = p.tree().clone();
     *state.project.lock().unwrap() = Some(p);
     Ok(OpenProjectResult { tree, session })
+}
+
+/// 取消正在进行的打开项目操作。
+///
+/// 抬高打开代次，使正在 `spawn_blocking` 中运行的 `Project::open`
+/// 检测到代次变化后提前终止并返回 `"cancelled"`。
+#[tauri::command]
+fn cancel_open_project(app: tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    state.open_generation.fetch_add(1, Ordering::SeqCst);
 }
 
 /// 关闭当前项目并释放其占用的内存。
@@ -348,6 +391,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_project,
+            cancel_open_project,
             save_project_hark,
             close_project,
             get_content,

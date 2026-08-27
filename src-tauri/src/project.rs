@@ -148,7 +148,12 @@ impl Project {
     /// # Errors
     /// 文件读取/解压失败、`ark_disasm` 不可用或执行失败、包内无 `.abc`
     /// 时返回中文错误信息（直接展示给用户）。
-    pub fn open(path: &Path, tool_path: Option<&str>, bundled: Option<&Path>) -> Result<Project, String> {
+    pub fn open(
+        path: &Path,
+        tool_path: Option<&str>,
+        bundled: Option<&Path>,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<Project, String> {
         let tool = runner::locate(tool_path, bundled)?;
         let file_name = path
             .file_name()
@@ -177,6 +182,9 @@ impl Project {
                     let work_dir = temp_root()?;
                     temp_dirs.push(work_dir.clone());
                     for i in 0..archive.len() {
+                        if is_cancelled() {
+                            return Err("cancelled".into());
+                        }
                         let mut entry = archive
                             .by_index(i)
                             .map_err(|e| format!("压缩包条目 #{i}: {e}"))?;
@@ -211,6 +219,9 @@ impl Project {
             }
             let mut units = Vec::with_capacity(abc_files.len());
             for (name, abc_path) in &abc_files {
+                if is_cancelled() {
+                    return Err("cancelled".into());
+                }
                 let (text, names) = runner::disassemble_with_names(&tool, abc_path)?;
                 units.push(AbcUnit {
                     name: name.clone(),

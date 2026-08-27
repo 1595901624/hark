@@ -25,6 +25,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview"
 import { Download, FileCode2, FolderOpen, FolderTree, LoaderCircle, Search } from "lucide-react"
 import { ChevronsDownUp, ChevronsUpDown } from "lucide-react"
 import { Button, addToast } from "../ui/base-ui"
+import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from "../ui/base-ui"
 import { usePersistentState } from "../../hooks/usePersistentState"
 import { cn } from "../../lib/utils"
 import { getStoredItem } from "../../lib/store"
@@ -159,6 +160,12 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
   /** 全局搜索结果点击后的行定位请求 */
   const [scrollTarget, setScrollTarget] = useState<{ nodeId: number; line: number; seq: number } | null>(null)
   const scrollTargetSeq = useRef(0)
+  /** 是否正在打开项目（回调中同步判断，避免重复打开） */
+  const openingRef = useRef(false)
+  /** 打开代次计数器：确保旧打开的 finally 不会干扰新打开的状态 */
+  const openSeqRef = useRef(0)
+  /** 用户在打开过程中又选择了新文件时暂存的路径，等待确认 */
+  const [pendingOpenPath, setPendingOpenPath] = useState<string | null>(null)
 
   /** 全部展开项目树。 */
   const expandAll = () =>
@@ -219,6 +226,13 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
    * @param path 文件绝对路径
    */
   const openFile = useCallback(async (path: string) => {
+    // 正在打开时暂存路径，由确认对话框决定是否终止当前并打开新的
+    if (openingRef.current) {
+      setPendingOpenPath(path)
+      return
+    }
+    openingRef.current = true
+    const mySeq = ++openSeqRef.current
     setBusyMessage(`正在打开 ${path.split(/[\\/]/).pop()} …`)
     try {
       const result: OpenProjectResult = await api.openProject(path)
@@ -266,11 +280,34 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
       // 同步一次工具路径（读取设置页的持久化配置），便于后端立即校验/缓存
       void api.setDisassemblerPath((await readStoredToolPath()) || null)
     } catch (e) {
+      // 被新打开取代的旧任务：静默忽略，不干扰新任务的 UI
+      if (openSeqRef.current !== mySeq) return
+      // 被用户取消：静默忽略
+      if (String(e) === "cancelled") return
       addToast({ title: "打开失败", description: String(e), severity: "danger" })
     } finally {
-      setBusyMessage(null)
+      // 仅当仍是最新任务时才重置状态
+      if (openSeqRef.current === mySeq) {
+        openingRef.current = false
+        setBusyMessage(null)
+      }
     }
   }, [loadView])
+
+  /** 用户确认终止当前打开并打开新文件。 */
+  const confirmReplaceOpen = useCallback(async () => {
+    const path = pendingOpenPath
+    setPendingOpenPath(null)
+    if (!path) return
+    await api.cancelOpenProject()
+    openingRef.current = false
+    void openFile(path)
+  }, [pendingOpenPath, openFile])
+
+  /** 用户取消替换，继续等待当前打开完成。 */
+  const cancelReplaceOpen = useCallback(() => {
+    setPendingOpenPath(null)
+  }, [])
 
   /** 弹出原生文件选择框并打开选中的文件。 */
   const pickAndOpen = useCallback(async () => {
@@ -646,6 +683,7 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
   }
 
   return (
+    <>
     <div className="flex min-h-0 flex-1 overflow-hidden">
       {/* 左侧项目树面板 */}
         <aside
@@ -818,6 +856,16 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
             <EmptyState
               icon={<LoaderCircle className="h-10 w-10 animate-spin text-primary/70" />}
               text={busyMessage}
+              action={
+                <Button
+                  color="danger"
+                  variant="flat"
+                  size="sm"
+                  onPress={() => void api.cancelOpenProject()}
+                >
+                  取消
+                </Button>
+              }
             />
           ) : activeLoading ? (
             <EmptyState
@@ -880,6 +928,26 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
           )}
         </main>
       </div>
+      {/* 打开过程中又选择新文件时的确认对话框 */}
+      <Modal
+        isOpen={pendingOpenPath !== null}
+        onClose={cancelReplaceOpen}
+        size="sm"
+      >
+        <ModalContent>
+          <ModalHeader>终止当前操作</ModalHeader>
+          <ModalBody>
+            <p className="text-sm text-default-600">
+              确定要终止当前正在打开的项目，打开一个新的项目吗？
+            </p>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="light" onPress={cancelReplaceOpen}>取消</Button>
+            <Button color="primary" onPress={() => void confirmReplaceOpen()}>确定</Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+    </>
   )
 }
 
