@@ -82,7 +82,11 @@ pub fn parse(signature: &str) -> Sig {
     let paren_open = body.find('(').unwrap_or(body.len());
     let paren_close = body.rfind(')').unwrap_or(body.len());
     let head = &body[..paren_open];
-    let params_text = &body[paren_open + 1..paren_close.min(body.len())];
+    let params_text = if paren_open < body.len() && paren_close > paren_open {
+        &body[paren_open + 1..paren_close.min(body.len())]
+    } else {
+        ""
+    };
 
     // head = `<返回类型> <限定名>`；限定名取最后一个空格后的 token
     let qualified = head.trim().rsplit(' ').next().unwrap_or("").trim();
