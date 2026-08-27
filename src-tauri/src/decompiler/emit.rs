@@ -216,7 +216,7 @@ pub fn record_to_arkts(rec: &PaRecord, names: &Names) -> String {
         ));
         return out;
     }
-    out.push_str(&format!("// 由方舟字节码还原，record: {}\n", rec.raw_name));
+    out.push_str(&format!("// 该文件由 Hark 从方舟字节码还原生成，仅供参考，record: {}\n", rec.raw_name));
     if let Some(sf) = &rec.source_file {
         out.push_str(&format!("// 来源文件: {sf}\n"));
     }
