@@ -6,6 +6,8 @@
 //! - [`get_content`]：按节点 ID 获取内容切片（支持 abc / ets 双视图）；
 //! - [`export_node_ets`]：把节点的 ArkTS 还原结果导出为文件；
 //! - [`export_node_pa`]：把节点的反汇编文本导出为 `.pa` 文件；
+//! - [`export_project_abc`]：把项目包含的全部原始 `.abc` 字节码批量导出到目录；
+//! - [`export_project_pa`]：按项目树结构把全部类反汇编批量导出为 `.pa` 文件；
 //! - [`close_project`]：关闭当前项目；
 //! - [`set_disassembler_path`]：配置官方 `ark_disasm` 路径（保存前执行
 //!   `--version` 校验）；
@@ -214,6 +216,41 @@ fn export_node_pa(node_id: u32, path: String, state: State<AppState>) -> Result<
     p.export_pa(node_id, std::path::Path::new(&path))
 }
 
+/// 把当前项目包含的全部原始 `.abc` 字节码批量导出到目标目录。
+///
+/// 文件写入 `<dir>/<项目名去扩展名>/` 子目录：`.abc` 项目直接复制源文件；
+/// 压缩包项目从源文件重新提取全部 `.abc` 条目并按包内相对路径保存。
+///
+/// # Errors
+/// 无已打开项目、路径为空、无 `.abc` 可导出或写盘失败时返回中文错误信息。
+#[tauri::command]
+fn export_project_abc(dir: String, state: State<AppState>) -> Result<Vec<String>, String> {
+    if dir.trim().is_empty() {
+        return Err("导出路径为空".into());
+    }
+    let guard = state.project.lock().unwrap();
+    let p = guard.as_ref().ok_or("没有已打开的项目")?;
+    p.export_abc_all(std::path::Path::new(dir.trim()))
+}
+
+/// 按项目树结构把当前项目全部类的反汇编文本批量导出为 `.pa` 文件到目标目录。
+///
+/// 在 `<dir>/<项目名>/` 下镜像左侧项目树：包名作为一层层文件夹，每个类作为
+/// 单独的 `.pa` 文件（内容为该类的完整 pandasm 反汇编，与 `.abc` 视图一致）。
+/// 多单元项目按 `.abc` 单元建子目录，同名类自动去重。
+///
+/// # Errors
+/// 无已打开项目、路径为空、无可导出内容或写盘失败时返回中文错误信息。
+#[tauri::command]
+fn export_project_pa(dir: String, state: State<AppState>) -> Result<Vec<String>, String> {
+    if dir.trim().is_empty() {
+        return Err("导出路径为空".into());
+    }
+    let guard = state.project.lock().unwrap();
+    let p = guard.as_ref().ok_or("没有已打开的项目")?;
+    p.export_pa_all(std::path::Path::new(dir.trim()))
+}
+
 /// 配置官方 `ark_disasm` 可执行文件路径。
 ///
 /// - 传入 `Some(path)`：要求该路径指向实际存在的文件，并执行
@@ -316,6 +353,8 @@ pub fn run() {
             get_content,
             export_node_ets,
             export_node_pa,
+            export_project_abc,
+            export_project_pa,
             set_disassembler_path,
             disassembler_version,
             search_project

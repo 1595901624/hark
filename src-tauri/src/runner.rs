@@ -142,7 +142,12 @@ fn run_once(tool: &Path, extra_args: &[&str], abc_path: &Path) -> Result<String,
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     let pa = if pa_path.is_file() {
-        std::fs::read_to_string(&pa_path).unwrap_or_default()
+        // ark_disasm 输出的 .pa 中字符串字面量可能含非标准 UTF-8
+        // （如过长的 null 编码 C0 80 / modified UTF-8），read_to_string
+        // 会因此报错；改用 read + from_utf8_lossy 容错处理。
+        std::fs::read(&pa_path)
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .unwrap_or_default()
     } else {
         String::new()
     };

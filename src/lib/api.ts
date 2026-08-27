@@ -188,6 +188,31 @@ export const api = {
   },
 
   /**
+   * 把当前项目包含的全部原始 `.abc` 字节码批量导出到目标目录。
+   *
+   * 后端在所选目录下自动创建以项目名命名的子目录：`.abc` 项目复制源文件，
+   * 压缩包项目按包内相对路径提取全部 `.abc` 条目（同名覆盖）。
+   * @param dir 目标目录的绝对路径
+   * @returns 成功写入的文件相对路径列表（相对导出子目录）
+   */
+  exportProjectAbc(dir: string): Promise<string[]> {
+    return invoke<string[]>("export_project_abc", { dir })
+  },
+
+  /**
+   * 把项目全部反汇编文本按项目树结构批量导出为 `.pa` 文件到目标目录。
+   *
+   * 后端在所选目录下创建以项目名命名的子目录，并镜像左侧项目树：包名作为
+   * 一层层文件夹、每个类作为单独的 `.pa` 文件（内容为该类的完整反汇编）。
+   * 多单元项目按 `.abc` 单元建子目录，同名类自动去重。
+   * @param dir 目标目录的绝对路径
+   * @returns 成功写入的文件相对路径列表（相对导出子目录）
+   */
+  exportProjectPa(dir: string): Promise<string[]> {
+    return invoke<string[]>("export_project_pa", { dir })
+  },
+
+  /**
    * 配置官方 `ark_disasm` 可执行文件路径。
    *
    * 保存前后端会对目标二进制执行 `--version` 校验，失败时返回错误且不保存。

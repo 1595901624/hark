@@ -6,6 +6,9 @@
 //!    全部 `.abc` 条目到临时目录；
 //! 2. 逐个调用官方 `ark_disasm`（见 [`crate::runner`]）生成 `.pa` 文本；
 //! 3. 解析 `.pa`（见 [`crate::pa`]）并按 record 展示名构建包层级树。
+//!
+//! 支持把项目包含的全部原始 `.abc` 字节码批量导出到指定目录
+//! （见 [`Project::export_abc_all`]）。
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -170,10 +173,7 @@ impl Project {
                     abc_files.push((file_name.clone(), path.to_path_buf()));
                 }
                 "hap" | "har" | "app" | "zip" => {
-                    let data = fs::read(path).map_err(|e| format!("读取失败: {e}"))?;
-                    let cursor = std::io::Cursor::new(data);
-                    let mut archive =
-                        zip::ZipArchive::new(cursor).map_err(|e| format!("无效压缩包: {e}"))?;
+                    let mut archive = open_zip(path)?;
                     let work_dir = temp_root()?;
                     temp_dirs.push(work_dir.clone());
                     for i in 0..archive.len() {
@@ -435,6 +435,155 @@ impl Project {
             .map_err(|e| format!("写入 {target:?} 失败: {e}"))
     }
 
+    /// 把项目包含的全部原始 `.abc` 字节码批量导出到目标目录。
+    ///
+    /// 实际写入位置为 `<dir>/<项目名去扩展名>/`：
+    /// - `.abc` 项目：直接把源文件复制为 `<dir>/<stem>/<文件名>`；
+    /// - 压缩包项目：从 [`Project::source_path`] 重新读取压缩包，提取全部
+    ///   `.abc` 条目并按包内相对路径保存，不依赖打开时的临时文件；
+    /// - 同名已存在的文件会被覆盖。
+    ///
+    /// 返回成功写入的文件相对路径列表（相对导出子目录，使用包内原始名）。
+    ///
+    /// # Errors
+    /// 目标目录创建失败、源文件读取失败或写盘失败时返回中文错误信息。
+    pub fn export_abc_all(&self, dir: &Path) -> Result<Vec<String>, String> {
+        // 导出子目录名取自项目名的去扩展名形式（如 `demo.hap` → `demo`）
+        let stem = Path::new(&self.name)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| self.name.clone());
+        let root = dir.join(sanitize_component(&stem));
+        fs::create_dir_all(&root).map_err(|e| format!("创建目录失败: {e}"))?;
+
+        match self.kind.as_str() {
+            "abc" => {
+                let target = root.join(&self.name);
+                fs::copy(&self.source_path, &target).map_err(|e| {
+                    format!("复制 {}: {e}", self.source_path.display())
+                })?;
+                Ok(vec![self.name.clone()])
+            }
+            "hap" | "har" | "app" | "zip" => {
+                let mut archive = open_zip(&self.source_path)?;
+                let mut written = vec![];
+                for i in 0..archive.len() {
+                    let mut entry = archive
+                        .by_index(i)
+                        .map_err(|e| format!("压缩包条目 #{i}: {e}"))?;
+                    let name = entry.name().to_string();
+                    if name.ends_with('/') || entry.is_dir() {
+                        continue;
+                    }
+                    if !name.to_ascii_lowercase().ends_with(".abc") {
+                        continue;
+                    }
+                    let Some(rel) = safe_relative_path(&name) else {
+                        continue;
+                    };
+                    let target = root.join(rel);
+                    if let Some(parent) = target.parent() {
+                        fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
+                    }
+                    let mut bytes = Vec::new();
+                    entry.read_to_end(&mut bytes).map_err(|e| format!("读取 `{name}`: {e}"))?;
+                    fs::write(&target, &bytes).map_err(|e| format!("写入 {target:?} 失败: {e}"))?;
+                    written.push(name);
+                }
+                if written.is_empty() {
+                    return Err("该文件中没有找到 .abc 字节码".into());
+                }
+                Ok(written)
+            }
+            other => Err(format!("不支持的文件类型: .{other}")),
+        }
+    }
+
+    /// 把项目包含的全部反汇编文本按项目树结构批量导出为 `.pa` 文件。
+    ///
+    /// 导出布局镜像前端项目树：`<dir>/<项目名>/[<单元名>/]<包>/<子包>/<类>.pa`。
+    /// - 单单元项目省略单元目录，包层级直接放在项目根下；
+    /// - 多单元项目为每个 `.abc` 建一个以短名（去 `.abc`）命名的子目录，
+    ///   同名单元追加 `-2`/`-3` 去重；
+    /// - 类文件按其展示名的 `.` 分段落入对应包层级，`<global>` 等无包名类
+    ///   直接放在单元目录下；同名类路径追加数字后缀去重；
+    /// - 每个文件内容为该类的完整 pandasm 反汇编（与 `.abc` 视图一致）。
+    ///
+    /// 返回成功写入的文件相对路径列表（相对导出子目录，使用正斜杠）。
+    ///
+    /// # Errors
+    /// 目标目录创建失败或写盘失败时返回中文错误信息。
+    pub fn export_pa_all(&self, dir: &Path) -> Result<Vec<String>, String> {
+        let stem = Path::new(&self.name)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| self.name.clone());
+        let root = dir.join(sanitize_component(&stem));
+        fs::create_dir_all(&root).map_err(|e| format!("创建目录失败: {e}"))?;
+
+        let single_unit = self.units.len() == 1;
+        let mut used_unit_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut written: Vec<String> = Vec::new();
+
+        for unit in &self.units {
+            // 单单元项目直接放在项目根下；多单元项目按单元短名建子目录
+            let unit_dir = if single_unit {
+                root.clone()
+            } else {
+                let short = unit.name.rsplit('/').next().unwrap_or(&unit.name);
+                let base = sanitize_filename(short.trim_end_matches(".abc"));
+                let mut name = base.clone();
+                let mut n = 2;
+                while !used_unit_dirs.insert(name.clone()) {
+                    name = format!("{base}-{n}");
+                    n += 1;
+                }
+                root.join(&name)
+            };
+
+            // 同一单元内同类名去重
+            let mut used: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+            for ri in 0..unit.pa.records.len() {
+                let display = &unit.pa.records[ri].display_name;
+                let (parents, leaf) = split_record_name(display);
+                let at_root =
+                    parents.is_empty() || leaf.starts_with('<') || display.contains(' ');
+                let leaf = sanitize_filename(&leaf);
+                let mut folder = unit_dir.clone();
+                if !at_root {
+                    for seg in &parents {
+                        folder = folder.join(sanitize_filename(seg));
+                    }
+                }
+                // 文件名去重：Foo.pa → Foo-2.pa → Foo-3.pa …
+                let mut n = 1;
+                let file_name = loop {
+                    let name = if n == 1 {
+                        format!("{leaf}.pa")
+                    } else {
+                        format!("{leaf}-{n}.pa")
+                    };
+                    if used.insert(folder.join(&name)) {
+                        break name;
+                    }
+                    n += 1;
+                };
+                let target = folder.join(&file_name);
+                fs::create_dir_all(&folder).map_err(|e| format!("创建目录失败: {e}"))?;
+                let body = unit.pa.render_record(ri).unwrap_or_default();
+                fs::write(&target, body)
+                    .map_err(|e| format!("写入 {target:?} 失败: {e}"))?;
+                let rel = target.strip_prefix(&root).unwrap_or(&target);
+                written.push(rel.to_string_lossy().replace('\\', "/"));
+            }
+        }
+
+        if written.is_empty() {
+            return Err("该项目没有可导出的反汇编内容".into());
+        }
+        Ok(written)
+    }
+
     /// 全局搜索：对内存中已解析的 `.pa` 数据按多类别检索。
     ///
     /// `is_cancelled` 由命令层周期性检查；取消时结果为空且带
@@ -493,6 +642,49 @@ fn sanitize_component(name: &str) -> String {
         .filter(|s| !s.is_empty() && *s != ".." && *s != ".")
         .collect::<Vec<_>>()
         .join("__")
+}
+
+/// 打开 zip 压缩包（整体读入内存后解析），打开失败返回中文错误信息。
+fn open_zip(path: &Path) -> Result<zip::ZipArchive<std::io::Cursor<Vec<u8>>>, String> {
+    let data = fs::read(path).map_err(|e| format!("读取失败: {e}"))?;
+    let cursor = std::io::Cursor::new(data);
+    zip::ZipArchive::new(cursor).map_err(|e| format!("无效压缩包: {e}"))
+}
+
+/// 把压缩包条目名转换为导出根目录下的安全相对路径（保留包内层级）。
+///
+/// 按 `/` 与 `\` 分段，过滤空段、`.` 与 `..`；段内的 `:` 替换为 `_`，
+/// 防止 Windows 盘符形式的段在写盘时逃逸到其他位置。全部段被过滤时
+/// （如条目名只有目录分隔符）返回 `None`。
+///
+/// - `ets/modules.abc`     -> `ets/modules.abc`
+/// - `..\..\evil.abc`      -> `evil.abc`
+/// - `C:steal.abc`         -> `C_steal.abc`
+fn safe_relative_path(name: &str) -> Option<PathBuf> {
+    let mut rel = PathBuf::new();
+    for seg in name.split(['/', '\\']) {
+        match seg {
+            "" | "." | ".." => {}
+            s => rel.push(s.replace(':', "_")),
+        }
+    }
+    if rel.as_os_str().is_empty() {
+        None
+    } else {
+        Some(rel)
+    }
+}
+
+/// 把文件名中各平台禁止的字符替换为 `_`（`\ / : * ? " < > |`）。
+///
+/// 用于导出时把类名 / 包名段转换为安全的文件系统名；`&` 等合法字符保留。
+fn sanitize_filename(name: &str) -> String {
+    name.chars()
+        .map(|c| match c {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c => c,
+        })
+        .collect()
 }
 
 /// 包层级的中间结构，用于把类名按 `.` 分段归组到包节点。
@@ -644,6 +836,7 @@ pub struct NodeContent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write as _;
 
     /// 版本号后缀（最后一个 `&` 起）必须整体并入类短名，不参与 `.` 分段。
     #[test]
@@ -664,5 +857,202 @@ mod tests {
         let (parents, leaf) = split_record_name("Foo");
         assert!(parents.is_empty());
         assert_eq!(leaf, "Foo");
+    }
+
+    /// 安全相对路径：保留层级、过滤穿越与空段、替换盘符冒号。
+    #[test]
+    fn builds_safe_relative_paths() {
+        assert_eq!(
+            safe_relative_path("ets/modules.abc"),
+            Some(PathBuf::from("ets/modules.abc"))
+        );
+        assert_eq!(
+            safe_relative_path("../evil.abc"),
+            Some(PathBuf::from("evil.abc"))
+        );
+        assert_eq!(
+            safe_relative_path("..\\..\\x\\y.abc"),
+            Some(PathBuf::from("x/y.abc"))
+        );
+        assert_eq!(
+            safe_relative_path("/abs.abc"),
+            Some(PathBuf::from("abs.abc"))
+        );
+        assert_eq!(
+            safe_relative_path("C:steal.abc"),
+            Some(PathBuf::from("C_steal.abc"))
+        );
+        assert_eq!(safe_relative_path("/"), None);
+    }
+
+    /// 构造一个仅填充导出逻辑所需字段的最小项目实例。
+    fn bare_project(name: &str, kind: &str, source: PathBuf) -> Project {
+        Project {
+            name: name.to_string(),
+            kind: kind.to_string(),
+            source_path: source,
+            units: vec![],
+            archive_entries: vec![],
+            nodes: HashMap::new(),
+            class_nodes: HashMap::new(),
+            resource_nodes: HashMap::new(),
+            tree: TreeNode {
+                id: 0,
+                name: String::new(),
+                kind: NodeKind::Root,
+                detail: String::new(),
+                children: vec![],
+            },
+            next_id: 0,
+            ets_cache: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// 压缩包项目只导出 `.abc` 条目且保持包内层级（资源被跳过）；
+    /// `.abc` 直开项目把源文件复制为 `<目录>/<项目名去扩展名>/<文件名>`。
+    #[test]
+    fn exports_raw_abc_from_archive_and_copies_single_abc() {
+        let tmp = std::env::temp_dir().join(format!("hark-export-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        // 构造最小压缩包：一个 .abc 条目 + 一个资源条目
+        let hap_path = tmp.join("demo.hap");
+        let file = fs::File::create(&hap_path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("ets/modules.abc", options).unwrap();
+        zip.write_all(b"ABC-BYTES").unwrap();
+        zip.start_file("assets/logo.png", options).unwrap();
+        zip.write_all(b"png").unwrap();
+        zip.finish().unwrap();
+
+        let out_dir = tmp.join("out");
+        let project = bare_project("demo.hap", "hap", hap_path.clone());
+        let written = project.export_abc_all(&out_dir).unwrap();
+        assert_eq!(written, vec!["ets/modules.abc"]);
+        let target = out_dir.join("demo").join("ets").join("modules.abc");
+        assert_eq!(fs::read(&target).unwrap(), b"ABC-BYTES");
+        assert!(!out_dir.join("demo/assets").exists());
+
+        // 直接打开的 .abc 项目：走复制分支
+        let abc_path = tmp.join("single.abc");
+        fs::write(&abc_path, b"SINGLE").unwrap();
+        let project = bare_project("single.abc", "abc", abc_path);
+        let written = project.export_abc_all(&out_dir).unwrap();
+        assert_eq!(written, vec!["single.abc"]);
+        assert_eq!(
+            fs::read(out_dir.join("single").join("single.abc")).unwrap(),
+            b"SINGLE"
+        );
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// 整单元反汇编导出：单单元项目每个类按包层级写出一份 `.pa`。
+    #[test]
+    fn exports_full_pa_per_class_in_package_tree() {
+        let pa = crate::pa::PaFile::parse(
+            ".record Lcom/example/Foo; {\n.access_flags public\n}\n\
+             .function any Lcom/example/Foo;.bar() {\nreturn\n}\n\
+             .record Lcom/example/Bar; {\n}\n\
+             .record LGlobal; {\n}\n",
+        );
+        let unit = AbcUnit {
+            name: "ets/modules.abc".to_string(),
+            pa,
+            names: crate::decompiler::LiteralNames::default(),
+        };
+        let tmp = std::env::temp_dir().join(format!("hark-pa-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        let project = Project {
+            name: "demo.hap".to_string(),
+            kind: "hap".to_string(),
+            source_path: tmp.join("demo.hap"),
+            units: vec![unit],
+            archive_entries: vec![],
+            nodes: HashMap::new(),
+            class_nodes: HashMap::new(),
+            resource_nodes: HashMap::new(),
+            tree: TreeNode {
+                id: 0,
+                name: String::new(),
+                kind: NodeKind::Root,
+                detail: String::new(),
+                children: vec![],
+            },
+            next_id: 0,
+            ets_cache: RefCell::new(HashMap::new()),
+        };
+        let out_dir = tmp.join("out");
+        let mut written = project.export_pa_all(&out_dir).unwrap();
+        written.sort();
+        // 单单元省略单元目录；com/example 下两个类，无包名类放根下
+        assert_eq!(
+            written,
+            vec!["Global.pa", "com/example/Bar.pa", "com/example/Foo.pa"]
+        );
+        let foo = fs::read_to_string(out_dir.join("demo").join("com").join("example").join("Foo.pa")).unwrap();
+        assert!(foo.contains(".record Lcom/example/Foo; {"));
+        assert!(foo.contains(".function any Lcom/example/Foo;.bar() {"));
+        assert!(foo.contains("return"));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// 多单元项目为每个 `.abc` 建子目录；显示名相同（原始名不同）的类在单元内去重。
+    #[test]
+    fn exports_pa_with_unit_dirs_and_dedup() {
+        // Lcom.Foo; 与 Lcom/Foo; 的展示名均为 com.Foo，导出路径相同需去重
+        let make_unit = |name: &str| AbcUnit {
+            name: name.to_string(),
+            pa: crate::pa::PaFile::parse(
+                ".record Lcom.Foo; {\n}\n.record Lcom/Foo; {\n}\n",
+            ),
+            names: crate::decompiler::LiteralNames::default(),
+        };
+        let tmp = std::env::temp_dir().join(format!("hark-pa2-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        let project = Project {
+            name: "app.hap".to_string(),
+            kind: "hap".to_string(),
+            source_path: tmp.join("app.hap"),
+            units: vec![make_unit("ets/modules.abc"), make_unit("libs/modules.abc")],
+            archive_entries: vec![],
+            nodes: HashMap::new(),
+            class_nodes: HashMap::new(),
+            resource_nodes: HashMap::new(),
+            tree: TreeNode {
+                id: 0,
+                name: String::new(),
+                kind: NodeKind::Root,
+                detail: String::new(),
+                children: vec![],
+            },
+            next_id: 0,
+            ets_cache: RefCell::new(HashMap::new()),
+        };
+        let out_dir = tmp.join("out");
+        let mut written = project.export_pa_all(&out_dir).unwrap();
+        written.sort();
+        // 两个单元各建一个 modules 目录；单元内同路径类去重为 Foo.pa / Foo-2.pa
+        assert_eq!(
+            written,
+            vec![
+                "modules-2/com/Foo-2.pa",
+                "modules-2/com/Foo.pa",
+                "modules/com/Foo-2.pa",
+                "modules/com/Foo.pa",
+            ]
+        );
+        assert!(out_dir.join("app").join("modules").join("com").join("Foo.pa").exists());
+        assert!(out_dir.join("app").join("modules").join("com").join("Foo-2.pa").exists());
+        assert!(out_dir.join("app").join("modules-2").join("com").join("Foo.pa").exists());
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

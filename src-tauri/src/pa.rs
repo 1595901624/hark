@@ -233,6 +233,22 @@ impl PaFile {
         out.push_str("}\n");
         Some(out)
     }
+
+    /// 将全部 record 依次还原为 pandasm 文本，record 之间以空行分隔。
+    ///
+    /// 用于整单元的 `.pa` 导出；输出与逐条 [`PaFile::render_record`] 拼接一致。
+    pub fn render_all(&self) -> String {
+        let mut out = String::new();
+        for i in 0..self.records.len() {
+            if i > 0 {
+                out.push('\n');
+            }
+            if let Some(text) = self.render_record(i) {
+                out.push_str(&text);
+            }
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -308,6 +324,21 @@ mod tests {
         // 每条指令必须独占一行，且缩进重排为 8 空格（对齐到 .function 内部）
         assert!(text.contains("\n        mov v0, v1\n"), "text: {text}");
         assert!(text.contains("\n        return\n"));
+        assert!(text.trim_end().ends_with('}'));
+    }
+
+    /// `render_all` 依次拼接全部 record，record 间以空行分隔。
+    #[test]
+    fn renders_all_records_concatenated() {
+        let pa = PaFile::parse(SAMPLE);
+        let text = pa.render_all();
+        // 四个 record 均出现，且以空行分隔（`}\n\n.record`）
+        assert!(text.contains(".record Lstd/core/String; {"));
+        assert!(text.contains(".record Lstd/core/Foreign; <external>"));
+        assert!(text.contains(".record Lcom/example/Foo; {"));
+        assert!(text.contains(".record <global> {"));
+        assert!(text.contains("}\n\n.record Lstd/core/Foreign;"));
+        // 以最后一个 record 的闭合 `}` 结尾
         assert!(text.trim_end().ends_with('}'));
     }
 }

@@ -15,6 +15,8 @@
  * - 每个内容区提供 `.abc`（反汇编）/ `.ets`（ArkTS 还原）双视图，
  *   按需加载并缓存两份内容，支持把反汇编导出为 `.pa`、
  *   把 ArkTS 还原结果导出为 `.ets` 文件；
+ * - 「文件 → 导出」把项目内全部原始 `.abc` 字节码与全部单元反汇编
+ *   （`.pa`）批量导出到所选目录；
  * - 持久化侧栏宽度与侧栏视图选择；打开项目时同步设置页配置的 `ark_disasm` 路径。
  */
 import { useCallback, useEffect, useRef, useState } from "react"
@@ -341,6 +343,54 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
     }
   }, [tree, harkPath, saveProjectAs, buildWorkspaceSnapshot])
 
+  /**
+   * 项目级导出的通用流程：校验项目 → 选择目录 → 调用后端 → toast。
+   */
+  const runProjectExport = useCallback(
+    async (
+      invoke: (dir: string) => Promise<string[]>,
+      successTitle: (count: number) => string,
+    ) => {
+      if (!tree) {
+        addToast({ title: "无法导出", description: "尚未打开项目", severity: "warning" })
+        return
+      }
+      const selected = await openFileDialog({
+        directory: true,
+        multiple: false,
+        title: "选择导出目录",
+      })
+      if (typeof selected !== "string") return
+      try {
+        const files = await invoke(selected)
+        addToast({ title: successTitle(files.length), description: selected, severity: "success" })
+      } catch (e) {
+        addToast({ title: "导出失败", description: String(e), severity: "danger" })
+      }
+    },
+    [tree],
+  )
+
+  /** 导出项目内全部原始 `.abc` 字节码。 */
+  const exportProjectAbc = useCallback(
+    () =>
+      runProjectExport(
+        (dir) => api.exportProjectAbc(dir),
+        (n) => `已导出 ${n} 个 abc 文件`,
+      ),
+    [runProjectExport],
+  )
+
+  /** 导出项目全部单元的反汇编文本（`.pa`）。 */
+  const exportProjectPa = useCallback(
+    () =>
+      runProjectExport(
+        (dir) => api.exportProjectPa(dir),
+        (n) => `已导出 ${n} 个 .pa 文件`,
+      ),
+    [runProjectExport],
+  )
+
   // ---------- 全局事件 ----------
 
   useEffect(() => {
@@ -361,17 +411,25 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
     const onSaveProject = () => void saveProject()
     /** 标题栏「文件 → 另存为…」 */
     const onSaveProjectAs = () => void saveProjectAs()
+    /** 标题栏「文件 → 导出 → ABC 字节码…」 */
+    const onExportProjectAbc = () => void exportProjectAbc()
+    /** 标题栏「文件 → 导出 → 反汇编 (.pa)…」 */
+    const onExportProjectPa = () => void exportProjectPa()
     window.addEventListener("hark:open-file", onOpenFile)
     window.addEventListener("hark:close-project", onCloseProject)
     window.addEventListener("hark:save-project", onSaveProject)
     window.addEventListener("hark:save-project-as", onSaveProjectAs)
+    window.addEventListener("hark:export-project-abc", onExportProjectAbc)
+    window.addEventListener("hark:export-project-pa", onExportProjectPa)
     return () => {
       window.removeEventListener("hark:open-file", onOpenFile)
       window.removeEventListener("hark:close-project", onCloseProject)
       window.removeEventListener("hark:save-project", onSaveProject)
       window.removeEventListener("hark:save-project-as", onSaveProjectAs)
+      window.removeEventListener("hark:export-project-abc", onExportProjectAbc)
+      window.removeEventListener("hark:export-project-pa", onExportProjectPa)
     }
-  }, [pickAndOpen, saveProject, saveProjectAs])
+  }, [pickAndOpen, saveProject, saveProjectAs, exportProjectAbc, exportProjectPa])
 
   // Ctrl+O 打开 / Ctrl+S 保存 / Ctrl+Shift+S 另存为
   // Ctrl+Shift+F 全局搜索 / Ctrl+F 编辑器内查找

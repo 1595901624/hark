@@ -124,6 +124,16 @@ export default function TitleBar({ onNavigate, onToggleSidebar }: TitleBarProps)
               {desktopMenuItem("open", "打开文件…", "Ctrl+O", () => window.dispatchEvent(new Event("hark:open-file")))}
               {desktopMenuItem("save", "保存", "Ctrl+S", () => window.dispatchEvent(new Event("hark:save-project")))}
               {desktopMenuItem("save-as", "另存为…", "Ctrl+Shift+S", () => window.dispatchEvent(new Event("hark:save-project-as")))}
+              <DropdownSubmenu
+                key="export"
+                label="导出"
+                className="min-h-7 rounded-md px-2.5 py-1 text-foreground data-[highlighted]:bg-default-100"
+                endContent={<ChevronRight className="h-3.5 w-3.5 text-default-400" />}
+                menuClassName="min-w-[150px] rounded-xl border-black/[0.08] bg-background p-1.5 text-[13px] shadow-[0_12px_32px_rgba(0,0,0,0.22),0_2px_8px_rgba(0,0,0,0.12)] dark:border-white/[0.1]"
+              >
+                {desktopMenuItem("export-abc", "ABC 字节码…", undefined, () => window.dispatchEvent(new Event("hark:export-project-abc")))}
+                {desktopMenuItem("export-pa", "反汇编 (.pa)…", undefined, () => window.dispatchEvent(new Event("hark:export-project-pa")))}
+              </DropdownSubmenu>
               <DropdownSeparator />
               {desktopMenuItem("close-project", "关闭项目", undefined, () => window.dispatchEvent(new Event("hark:close-project")))}
               <DropdownSeparator />
