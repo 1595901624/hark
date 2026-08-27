@@ -382,6 +382,72 @@ impl Project {
         }
     }
 
+    /// 定位方法节点在其所属类内容中的行位置（用于点击方法跳转到类内声明处）。
+    ///
+    /// 返回所属类节点 ID 与该方法在 abc / ets 视图中的 1-based 行号；
+    /// 行号为 0 表示未找到对应声明行。非方法节点返回错误。
+    pub fn method_location(&self, node_id: u32) -> Result<MethodLocation, String> {
+        let payload = self.nodes.get(&node_id).ok_or(format!("未知节点 #{node_id}"))?;
+        let NodePayload::Method { unit, record, method } = payload else {
+            return Err("该节点不是方法节点".into());
+        };
+
+        let u = &self.units[*unit];
+        let rec = u.pa.records.get(*record).ok_or("record missing")?;
+        let m = rec.methods.get(*method).ok_or("method missing")?;
+
+        // 所属类节点 ID
+        let class_node_id = *self
+            .class_nodes
+            .get(&(*unit, *record))
+            .ok_or("class node not found")?;
+
+        // abc 视图：在类反汇编文本中查找 `.function <signature> {`
+        let abc_body = u.pa.render_record(*record).ok_or("record missing")?;
+        let abc_target = format!(".function {} {{", m.signature);
+        let abc_line = abc_body
+            .lines()
+            .position(|l| l.contains(&abc_target))
+            .map(|i| i as u32 + 1)
+            .unwrap_or(0);
+
+        // ets 视图：在类 ArkTS 还原中查找方法声明行
+        let ets_content = self.content(class_node_id, "ets")?;
+        let s = decompiler::sig::parse(&m.signature);
+        let method_name = if s.is_ctor() {
+            "constructor".to_string()
+        } else {
+            s.name.clone()
+        };
+        let needle = format!("{}(", method_name);
+        let ets_line = ets_content
+            .body
+            .lines()
+            .position(|line| {
+                let trimmed = line.trim();
+                if !trimmed.ends_with(" {") {
+                    return false;
+                }
+                if let Some(pos) = trimmed.find(&needle) {
+                    if pos == 0 {
+                        return true;
+                    }
+                    let prev = trimmed.as_bytes()[pos - 1];
+                    !prev.is_ascii_alphanumeric() && prev != b'_' && prev != b'$'
+                } else {
+                    false
+                }
+            })
+            .map(|i| i as u32 + 1)
+            .unwrap_or(0);
+
+        Ok(MethodLocation {
+            class_node_id,
+            abc_line,
+            ets_line,
+        })
+    }
+
     /// 生成节点的 ArkTS 还原内容（不查缓存）。
     fn generate_ets(&self, node_id: u32) -> Result<NodeContent, String> {
         match self.nodes.get(&node_id) {
@@ -842,6 +908,17 @@ pub struct NodeContent {
     pub language: String,
     /// 正文文本。
     pub body: String,
+}
+
+/// 方法在其所属类内容中的行定位信息（用于「点击方法跳转到类内声明处」）。
+#[derive(Debug, Clone, Serialize)]
+pub struct MethodLocation {
+    /// 所属类节点的 ID。
+    pub class_node_id: u32,
+    /// abc 视图中方法声明所在行（1-based，0 表示未找到）。
+    pub abc_line: u32,
+    /// ets 视图中方法声明所在行（1-based，0 表示未找到）。
+    pub ets_line: u32,
 }
 
 #[cfg(test)]

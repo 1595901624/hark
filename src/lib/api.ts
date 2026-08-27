@@ -43,6 +43,16 @@ export interface NodeContent {
 /** 节点内容视图：`.abc` 反汇编 / `.ets` ArkTS 还原。 */
 export type ViewKind = "abc" | "ets"
 
+/** 方法在其所属类内容中的行定位信息（点击方法跳转到类内声明处）。 */
+export interface MethodLocation {
+  /** 所属类节点的 ID。 */
+  class_node_id: number
+  /** abc 视图中方法声明所在行（1-based，0 表示未找到）。 */
+  abc_line: number
+  /** ets 视图中方法声明所在行（1-based，0 表示未找到）。 */
+  ets_line: number
+}
+
 /** `.hark` 工作区快照中的单个标签恢复信息。 */
 export interface SavedTab {
   /** 项目树节点 ID。 */
@@ -175,6 +185,15 @@ export const api = {
    */
   getContent(nodeId: number, view: ViewKind = "abc"): Promise<NodeContent> {
     return invoke<NodeContent>("get_content", { nodeId, view })
+  },
+
+  /**
+   * 定位方法节点在其所属类内容中的行位置（点击方法跳转到类内声明处）。
+   * @param nodeId 方法节点 ID
+   * @returns 所属类节点 ID 与 abc / ets 视图中的行号
+   */
+  methodLocation(nodeId: number): Promise<MethodLocation> {
+    return invoke<MethodLocation>("method_location", { nodeId })
   },
 
   /**

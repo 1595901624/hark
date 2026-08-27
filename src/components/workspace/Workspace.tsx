@@ -119,6 +119,17 @@ function readDefaultOpenView(): ViewKind {
   }
 }
 
+/** 读取设置页持久化的「点击方法时在新页面打开」配置（未加载时回退 `false`）。 */
+function readOpenMethodInNewTab(): boolean {
+  const cached = getCachedStoredItem("open-method-in-new-tab")
+  if (cached === undefined || cached === null) return false
+  try {
+    return JSON.parse(cached) === true
+  } catch {
+    return false
+  }
+}
+
 /**
  * 渲染整个工作台界面。
  *
@@ -191,9 +202,10 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
     setSearchFocusSeq(seq => seq + 1)
   }, [setSidebarView])
 
-  // 确保默认打开模式已加载到缓存，供 openNode 同步读取
+  // 确保默认打开模式与方法打开方式已加载到缓存，供 openNode 同步读取
   useEffect(() => {
     void getStoredItem("default-open-view")
+    void getStoredItem("open-method-in-new-tab")
   }, [])
 
   // ---------- 内容加载 ----------
@@ -534,7 +546,7 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
    * 打开一个节点对应的标签（已存在时仅激活），并异步加载其内容。
    * @param node 被点击的项目树节点
    */
-  const openNode = useCallback(
+  const openNodeInTab = useCallback(
     (node: TreeNode) => {
       const key = `node-${node.id}`
       const view: ViewKind = VIEWABLE_KINDS.has(node.kind) ? readDefaultOpenView() : "abc"
@@ -555,6 +567,49 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
       loadView(key, node.id, view)
     },
     [loadView],
+  )
+
+  /**
+   * 点击方法时导航到所属类并滚动到方法声明处（类似 IDE 的 Structure）。
+   * 定位失败时回退到独立打开方法标签。
+   * @param node 方法节点
+   */
+  const navigateToMethodInClass = useCallback(
+    async (node: TreeNode) => {
+      if (!tree) { openNodeInTab(node); return }
+      try {
+        const loc = await api.methodLocation(node.id)
+        const classNode = findTreeNode(tree, loc.class_node_id)
+        if (!classNode) { openNodeInTab(node); return }
+        // 确定目标视图：已打开的类标签用其当前视图，否则用默认视图
+        const existing = tabsRef.current.find(e => e.tab.nodeId === classNode.id)
+        const view: ViewKind = existing?.view ?? readDefaultOpenView()
+        openNodeInTab(classNode)
+        const line = view === "abc" ? loc.abc_line : loc.ets_line
+        if (line > 0) {
+          setScrollTarget({ nodeId: classNode.id, line, seq: ++scrollTargetSeq.current })
+        }
+      } catch {
+        openNodeInTab(node)
+      }
+    },
+    [tree, openNodeInTab],
+  )
+
+  /**
+   * 节点点击分发器：方法节点根据设置决定是新开标签还是跳转到所属类；
+   * 其他节点直接打开标签。
+   * @param node 被点击的项目树节点
+   */
+  const openNode = useCallback(
+    (node: TreeNode) => {
+      if (node.kind === "method" && !readOpenMethodInNewTab()) {
+        void navigateToMethodInClass(node)
+      } else {
+        openNodeInTab(node)
+      }
+    },
+    [navigateToMethodInClass, openNodeInTab],
   )
 
   /**

@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use project::{NodeContent, Project, TreeNode};
+use project::{MethodLocation, NodeContent, Project, TreeNode};
 use serde::Serialize;
 use tauri::{Manager, State};
 
@@ -227,6 +227,19 @@ fn get_content(node_id: u32, view: Option<String>, state: State<AppState>) -> Re
     p.content(node_id, view)
 }
 
+/// 定位方法节点在其所属类内容中的行位置（点击方法跳转到类内声明处）。
+///
+/// 返回所属类节点 ID 与 abc / ets 视图中方法声明所在行号。
+///
+/// # Errors
+/// 无已打开项目、节点不是方法节点或定位失败时返回错误信息。
+#[tauri::command]
+fn method_location(node_id: u32, state: State<AppState>) -> Result<MethodLocation, String> {
+    let guard = state.project.lock().unwrap();
+    let p = guard.as_ref().ok_or("没有已打开的项目")?;
+    p.method_location(node_id)
+}
+
 /// 把指定节点的 ArkTS 还原结果导出为 `.ets` 文件。
 ///
 /// 内容与前端 `.ets` 视图完全一致；目标目录不存在时自动创建。
@@ -395,6 +408,7 @@ pub fn run() {
             save_project_hark,
             close_project,
             get_content,
+            method_location,
             export_node_ets,
             export_node_pa,
             export_project_abc,

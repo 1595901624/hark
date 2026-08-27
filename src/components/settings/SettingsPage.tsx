@@ -30,6 +30,7 @@ import { ThemeToggle } from "../ThemeToggle"
 import {
   addToast,
   Button,
+  Checkbox,
   Input,
   Modal,
   ModalBody,
@@ -374,6 +375,8 @@ function DecompilerToolSection() {
 function DecompilerConfigSection() {
   /** 默认文件打开模式（持久化，与工作台打开节点时读取的键一致）。 */
   const [defaultOpenView, setDefaultOpenView] = usePersistentState<ViewKind>("default-open-view", "ets")
+  /** 点击方法时是否在新页面打开（持久化，与工作台读取的键一致）。 */
+  const [openMethodInNewTab, setOpenMethodInNewTab] = usePersistentState<boolean>("open-method-in-new-tab", false)
 
   return (
     <section aria-labelledby="decompiler-config-heading">
@@ -400,6 +403,25 @@ function DecompilerConfigSection() {
                   <Radio value="ets">.ets（ArkTS 还原）</Radio>
                   <Radio value="abc">.abc（反汇编文本）</Radio>
                 </RadioGroup>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="py-4">
+          <div className="flex items-start gap-3">
+            <SlidersHorizontal className="mt-0.5 h-4 w-4 shrink-0 text-default-400" />
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-foreground">方法打开方式</div>
+              <p className="mt-1 max-w-xl text-xs leading-5 text-default-400">
+                勾选后点击左侧项目树中的方法将单独打开新标签页；不勾选时点击方法会跳转到所属类并定位到方法声明处（类似 IDE 的 Structure 功能）。
+              </p>
+              <div className="mt-3">
+                <Checkbox
+                  isSelected={openMethodInNewTab}
+                  onValueChange={setOpenMethodInNewTab}
+                >
+                  点击方法时，在新页面打开
+                </Checkbox>
               </div>
             </div>
           </div>
