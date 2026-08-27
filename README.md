@@ -2,16 +2,15 @@
 <img src="src/assets/app-icon.svg" width="48" height="48">
 <h1>Hark</h1>
 
-一个开源、轻量、纯离线的 Ark 字节码（.abc / .hap / .har）反编译工作台。
-
-简体中文
+一个开源、轻量的 Ark 字节码（.abc / .hap / .har）反编译软件。
+<!-- 简体中文 -->
 </div>
 
 <div align="center">
 <a href="https://github.com/1595901624/hark/releases"><img src="https://img.shields.io/github/v/release/1595901624/hark?display_name=tag&label=version&color=blue" alt="Version"></a>
-<img src="https://img.shields.io/badge/Windows-Supported-blue" alt="Windows">
-<img src="https://img.shields.io/badge/macOS-Supported-blue" alt="macOS">
-<img src="https://img.shields.io/badge/Linux-Supported-blue" alt="Linux">
+<img src="https://img.shields.io/badge/Windows-ComingSoon-blue" alt="Windows">
+<img src="https://img.shields.io/badge/macOS-ComingSoon-blue" alt="macOS">
+<!-- <img src="https://img.shields.io/badge/Linux-Supported-blue" alt="Linux"> -->
 </div>
 
 ## 为什么需要 Hark
@@ -22,7 +21,7 @@
 - **可视化浏览**：jadx-gui 风格布局，左侧项目树 / 全局搜索双视图 + 右侧多标签代码区
 - **双视图**：每个单元同时提供 `.abc` 反汇编与 `.ets`（ArkTS 还原）视图，按需加载并缓存
 - **可追溯**：工作区快照可保存为 `.hark` 文件，完整恢复标签、视图与项目树展开现场
-- **跨平台**：Windows 10/11、macOS 10.13+（Intel & Apple Silicon）、Linux 桌面（需 WebKit2GTK ≥4.1）
+- **跨平台**：Windows 10/11、macOS 10.13+（Intel & Apple Silicon）
 
 Hark 基于 [Tauri v2](https://v2.tauri.app/) + [React](https://react.dev/) 构建，内置 `ark_disasm` 并提供路径配置，专注于纯离线的反编译工作流。
 
