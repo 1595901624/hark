@@ -28,7 +28,7 @@ import { Button, addToast } from "../ui/base-ui"
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from "../ui/base-ui"
 import { usePersistentState } from "../../hooks/usePersistentState"
 import { cn } from "../../lib/utils"
-import { getStoredItem } from "../../lib/store"
+import { getCachedStoredItem, getStoredItem } from "../../lib/store"
 import {
   api,
   type NodeContent,
@@ -108,6 +108,17 @@ async function readStoredToolPath(): Promise<string> {
   }
 }
 
+/** 读取设置页持久化的默认文件打开模式（未加载时回退 `.ets`）。 */
+function readDefaultOpenView(): ViewKind {
+  const cached = getCachedStoredItem("default-open-view")
+  if (cached === undefined || cached === null) return "ets"
+  try {
+    return JSON.parse(cached) === "abc" ? "abc" : "ets"
+  } catch {
+    return "ets"
+  }
+}
+
 /**
  * 渲染整个工作台界面。
  *
@@ -179,6 +190,11 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
     setSidebarView("search")
     setSearchFocusSeq(seq => seq + 1)
   }, [setSidebarView])
+
+  // 确保默认打开模式已加载到缓存，供 openNode 同步读取
+  useEffect(() => {
+    void getStoredItem("default-open-view")
+  }, [])
 
   // ---------- 内容加载 ----------
 
@@ -521,12 +537,13 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
   const openNode = useCallback(
     (node: TreeNode) => {
       const key = `node-${node.id}`
+      const view: ViewKind = VIEWABLE_KINDS.has(node.kind) ? readDefaultOpenView() : "abc"
       setTabs(prev => {
         if (prev.some(entry => entry.tab.key === key)) return prev
         const entry: TabEntry = {
           tab: { key, title: node.name, nodeId: node.id },
           kind: node.kind,
-          view: "abc",
+          view,
           contents: {},
           loading: {},
           errors: {},
@@ -535,7 +552,7 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
         return next.length > MAX_TABS ? next.slice(next.length - MAX_TABS) : next
       })
       setActiveKey(key)
-      loadView(key, node.id, "abc")
+      loadView(key, node.id, view)
     },
     [loadView],
   )

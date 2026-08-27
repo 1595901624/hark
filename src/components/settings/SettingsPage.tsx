@@ -23,6 +23,7 @@ import {
   Info,
   Palette,
   RefreshCw,
+  SlidersHorizontal,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { ThemeToggle } from "../ThemeToggle"
@@ -35,15 +36,20 @@ import {
   ModalContent,
   ModalFooter,
   ModalHeader,
+  Radio,
+  RadioGroup,
   Tooltip,
   useDisclosure,
 } from "../ui/base-ui"
 import { usePersistentState } from "../../hooks/usePersistentState"
-import { api } from "../../lib/api"
+import { api, type ViewKind } from "../../lib/api"
 import appIcon from "../../assets/app-icon.svg"
 
 /** 设置页分区 ID。 */
 export type SettingsSectionId = "appearance" | "decompiler" | "data" | "about"
+
+/** 「反编译」分区下的子菜单 ID。 */
+type DecompilerSubId = "tool" | "config"
 
 /** 设置页分区描述。 */
 interface SettingsSection {
@@ -57,9 +63,15 @@ interface SettingsSection {
 /** 左侧导航分区（顺序即展示顺序）。 */
 const SECTIONS: SettingsSection[] = [
   { id: "appearance", label: "外观", icon: Palette, title: "外观", description: "自定义 Hark 的界面显示效果。" },
-  { id: "decompiler", label: "反编译器", icon: FileCode2, title: "反编译器", description: "配置用于反编译 Ark 字节码的外部工具。" },
+  { id: "decompiler", label: "反编译", icon: FileCode2, title: "反编译", description: "配置反编译工具与文件打开方式。" },
   { id: "data", label: "数据管理", icon: Database, title: "数据管理", description: "管理应用的本地数据与缓存。" },
   { id: "about", label: "关于", icon: Info, title: "关于" },
+]
+
+/** 「反编译」分区的子菜单描述。 */
+const DECOMPILER_SUBS: { id: DecompilerSubId; label: string; icon: LucideIcon; title: string; description: string }[] = [
+  { id: "tool", label: "反编译器", icon: FileCode2, title: "反编译器", description: "配置用于反编译 Ark 字节码的外部工具。" },
+  { id: "config", label: "配置", icon: SlidersHorizontal, title: "配置", description: "配置文件打开方式与默认视图。" },
 ]
 
 interface SettingsPageProps {
@@ -74,6 +86,8 @@ interface SettingsPageProps {
 /** 渲染软件设置页面。 */
 export function SettingsPage({ activeSection, onSectionChange, onBack }: SettingsPageProps) {
   const [version, setVersion] = useState("0.1.0")
+  /** 「反编译」分区当前激活的子菜单（仅在反编译分区显示子菜单）。 */
+  const [decompilerSub, setDecompilerSub] = useState<DecompilerSubId>("tool")
 
   useEffect(() => {
     getVersion()
@@ -109,23 +123,43 @@ export function SettingsPage({ activeSection, onSectionChange, onBack }: Setting
               aria-label="设置分区"
             >
               {SECTIONS.map(({ id, label, icon: Icon }) => (
-                <Button
-                  key={id}
-                  size="sm"
-                  color={activeSection === id ? "primary" : "default"}
-                  variant={activeSection === id ? "flat" : "light"}
-                  className="h-9 shrink-0 justify-start px-3 md:w-full"
-                  onPress={() => onSectionChange(id)}
-                  startContent={<Icon className="h-4 w-4" />}
-                >
-                  {label}
-                </Button>
+                <div key={id} className="flex shrink-0 flex-col gap-1 md:w-full">
+                  <Button
+                    size="sm"
+                    color={activeSection === id ? "primary" : "default"}
+                    variant={activeSection === id ? "flat" : "light"}
+                    className="h-9 shrink-0 justify-start px-3 md:w-full"
+                    onPress={() => onSectionChange(id)}
+                    startContent={<Icon className="h-4 w-4" />}
+                  >
+                    {label}
+                  </Button>
+                  {/* 反编译分区的子菜单 */}
+                  {id === "decompiler" && activeSection === "decompiler" && (
+                    <div className="flex shrink-0 gap-1 pl-3 md:flex-col md:pl-5">
+                      {DECOMPILER_SUBS.map(({ id: subId, label: subLabel, icon: SubIcon }) => (
+                        <Button
+                          key={subId}
+                          size="sm"
+                          color={decompilerSub === subId ? "primary" : "default"}
+                          variant={decompilerSub === subId ? "flat" : "light"}
+                          className="h-8 shrink-0 justify-start px-3 text-[12px] md:w-full"
+                          onPress={() => setDecompilerSub(subId)}
+                          startContent={<SubIcon className="h-3.5 w-3.5" />}
+                        >
+                          {subLabel}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               ))}
             </nav>
 
             <div className="min-h-0 flex-1 overflow-y-auto">
               {activeSection === "appearance" && <AppearanceSection />}
-              {activeSection === "decompiler" && <DecompilerSection />}
+              {activeSection === "decompiler" && decompilerSub === "tool" && <DecompilerToolSection />}
+              {activeSection === "decompiler" && decompilerSub === "config" && <DecompilerConfigSection />}
               {activeSection === "data" && <DataSection />}
               {activeSection === "about" && <AboutSection version={version} />}
             </div>
@@ -167,8 +201,8 @@ function AppearanceSection() {
   )
 }
 
-/** 反编译器分区：`ark_disasm` 可执行文件路径配置与版本信息。 */
-function DecompilerSection() {
+/** 反编译器子页：`ark_disasm` 可执行文件路径配置与版本信息。 */
+function DecompilerToolSection() {
   /** 已保存的 `ark_disasm` 路径（持久化，与工作台打开项目时读取的键一致）。 */
   const [toolPath, setToolPath, , toolPathLoaded] = usePersistentState<string>("disassembler-path", "")
   /** 输入框中的路径草稿（加载完成后与已保存值同步）。 */
@@ -256,9 +290,9 @@ function DecompilerSection() {
   }
 
   return (
-    <section aria-labelledby="decompiler-settings-heading">
+    <section aria-labelledby="decompiler-tool-heading">
       <SectionHeader
-        id="decompiler-settings-heading"
+        id="decompiler-tool-heading"
         title="反编译器"
         description="配置用于反编译 Ark 字节码的外部工具。"
       />
@@ -328,6 +362,45 @@ function DecompilerSection() {
               ) : (
                 <p className="text-xs leading-5 text-danger">{versionError ?? "尚未获取版本信息"}</p>
               )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/** 配置子页：默认文件打开模式。 */
+function DecompilerConfigSection() {
+  /** 默认文件打开模式（持久化，与工作台打开节点时读取的键一致）。 */
+  const [defaultOpenView, setDefaultOpenView] = usePersistentState<ViewKind>("default-open-view", "ets")
+
+  return (
+    <section aria-labelledby="decompiler-config-heading">
+      <SectionHeader
+        id="decompiler-config-heading"
+        title="配置"
+        description="配置文件打开方式与默认视图。"
+      />
+      <div className="divide-y divide-default-200 px-5">
+        <div className="py-4">
+          <div className="flex items-start gap-3">
+            <SlidersHorizontal className="mt-0.5 h-4 w-4 shrink-0 text-default-400" />
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-foreground">默认文件打开模式</div>
+              <p className="mt-1 max-w-xl text-xs leading-5 text-default-400">
+                选择点击文件时默认打开的视图。选中 .ets 时，每次点开文件将直接以 ArkTS 还原视图打开。
+              </p>
+              <div className="mt-3">
+                <RadioGroup
+                  value={defaultOpenView}
+                  onValueChange={(v) => setDefaultOpenView(v as ViewKind)}
+                  className="gap-2"
+                >
+                  <Radio value="ets">.ets（ArkTS 还原）</Radio>
+                  <Radio value="abc">.abc（反汇编文本）</Radio>
+                </RadioGroup>
+              </div>
             </div>
           </div>
         </div>
