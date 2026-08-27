@@ -136,7 +136,7 @@ export function SettingsPage({ activeSection, onSectionChange, onBack }: Setting
                     {label}
                   </Button>
                   {/* 反编译分区的子菜单 */}
-                  {id === "decompiler" && activeSection === "decompiler" && (
+                  {id === "decompiler" && (
                     <div className="flex shrink-0 gap-1 pl-3 md:flex-col md:pl-5">
                       {DECOMPILER_SUBS.map(({ id: subId, label: subLabel, icon: SubIcon }) => (
                         <Button
