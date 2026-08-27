@@ -109,8 +109,7 @@ pnpm install
 ```
 src-tauri/resources/bin/
 ├── windows/ark_disasm.exe
-├── macos/ark_disasm        (aarch64 / x86_64)
-└── linux/ark_disasm        (x86_64)
+└──  macos/ark_disasm        (aarch64 / x86_64)
 ```
 
 macOS / Linux 下记得赋予执行权限：`chmod +x ark_disasm`。
