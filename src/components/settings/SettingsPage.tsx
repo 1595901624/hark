@@ -1,5 +1,5 @@
 /**
- * 软件设置页面（参考 TroveKit 的设置页布局）。
+ * 软件设置页面。
  *
  * 布局：顶部「返回 + 设置」标题条，下方为圆角卡片：
  * 左侧是分区导航（外观 / 反编译器 / 数据管理 / 关于），
@@ -527,7 +527,7 @@ function AboutSection({ version }: { version: string }) {
           </Button>
         </div>
         <p className="mt-5 max-w-xl text-xs leading-5 text-default-400">
-          Hark 是一个 Ark 字节码（.abc / .hap / .har）反编译工作台，基于 TroveKit 框架构建。
+          Hark 是一个 Ark 字节码（.abc / .hap / .har）反编译工作台，基于 Tauri2 框架构建。
         </p>
       </div>
     </section>
