@@ -104,26 +104,28 @@ export default function TitleBar({ onNavigate, onToggleSidebar, onToggleAIPanel,
 
       {platform === "macos" ? (
         <>
-        <div data-tauri-drag-region className="absolute left-0 top-0 z-50 flex h-[var(--macos-titlebar-height)] w-[124px] select-none items-center pl-[76px] text-[#5f5f5f] dark:text-default-400">
-          {hostPlatform !== "macos" && (
-            <MacPreviewWindowControls
-              onClose={() => appWindow?.close()}
-              onMinimize={() => appWindow?.minimize()}
-              onMaximize={toggleMaximize}
-            />
-          )}
-          <TitleButton label="侧栏" onClick={onToggleSidebar}>
-            <PanelLeft className="h-[15px] w-[15px] -translate-y-px" />
-          </TitleButton>
-        </div>
-        {/* macOS 右上角 AI 面板按钮 */}
-        {onToggleAIPanel && (
-          <div className="absolute right-2 top-0 z-50 flex h-[var(--macos-titlebar-height)] select-none items-center text-[#5f5f5f] dark:text-default-400">
-            <TitleButton label="AI 面板" onClick={onToggleAIPanel}>
-              <PanelRight className={cn("h-[15px] w-[15px] -translate-y-px", isAIPanelOpen && "text-primary")} />
+        <div data-tauri-drag-region className="relative flex h-[var(--macos-titlebar-height)] shrink-0 select-none items-center text-[#5f5f5f] dark:text-default-400">
+          <div className="flex h-full w-[124px] items-center pl-[76px]">
+            {hostPlatform !== "macos" && (
+              <MacPreviewWindowControls
+                onClose={() => appWindow?.close()}
+                onMinimize={() => appWindow?.minimize()}
+                onMaximize={toggleMaximize}
+              />
+            )}
+            <TitleButton label="侧栏" onClick={onToggleSidebar}>
+              <PanelLeft className="h-[15px] w-[15px] -translate-y-px" />
             </TitleButton>
           </div>
-        )}
+          <div className="flex-1" data-tauri-drag-region />
+          {onToggleAIPanel && (
+            <div className="flex h-full items-center pr-2">
+              <TitleButton label="AI 面板" onClick={onToggleAIPanel}>
+                <PanelRight className={cn("h-[15px] w-[15px] -translate-y-px", isAIPanelOpen && "text-primary")} />
+              </TitleButton>
+            </div>
+          )}
+        </div>
         </>
       ) : (
         <div data-tauri-drag-region className="flex h-[var(--titlebar-height)] shrink-0 select-none items-center bg-chrome text-[#5f5f5f] dark:text-default-400">
