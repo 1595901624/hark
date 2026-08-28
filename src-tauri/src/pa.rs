@@ -85,7 +85,10 @@ fn split_signature(signature: &str) -> (String, String) {
     let head = &signature[..paren];
     let qualified = head.rsplit(' ').next().unwrap_or(head);
     match qualified.rfind('.') {
-        Some(pos) => (qualified[..pos].to_string(), qualified[pos + 1..].to_string()),
+        Some(pos) => (
+            qualified[..pos].to_string(),
+            qualified[pos + 1..].to_string(),
+        ),
         None => (String::new(), qualified.to_string()),
     }
 }
@@ -161,7 +164,11 @@ impl PaFile {
                     None => {
                         // 所属 record 未在 RECORDS 段出现（如系统类型），
                         // 或为无归属全局函数 -> 合成一个 record
-                        let raw = if owner_raw.is_empty() { "<global>" } else { owner_raw.as_str() };
+                        let raw = if owner_raw.is_empty() {
+                            "<global>"
+                        } else {
+                            owner_raw.as_str()
+                        };
                         records.push(PaRecord::new(raw));
                         index.insert(raw.to_string(), records.len() - 1);
                         records.len() - 1
@@ -177,7 +184,9 @@ impl PaFile {
             }
 
             if let Some((ri, mi)) = open_method {
-                records[ri].methods[mi].body.push(line.trim_end().to_string());
+                records[ri].methods[mi]
+                    .body
+                    .push(line.trim_end().to_string());
                 continue;
             }
 
@@ -289,7 +298,12 @@ mod tests {
     fn parses_records_methods_and_bodies() {
         let pa = PaFile::parse(SAMPLE);
         // String, Foreign, Foo, <global>
-        assert_eq!(pa.records.len(), 4, "records: {:?}", pa.records.iter().map(|r| &r.raw_name).collect::<Vec<_>>());
+        assert_eq!(
+            pa.records.len(),
+            4,
+            "records: {:?}",
+            pa.records.iter().map(|r| &r.raw_name).collect::<Vec<_>>()
+        );
 
         let s = &pa.records[0];
         assert_eq!(s.raw_name, "Lstd/core/String;");

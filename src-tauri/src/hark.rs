@@ -184,7 +184,11 @@ fn crc32(data: &[u8]) -> u32 {
         for (i, slot) in t.iter_mut().enumerate() {
             let mut c = i as u32;
             for _ in 0..8 {
-                c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+                c = if c & 1 != 0 {
+                    0xEDB8_8320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
             }
             *slot = c;
         }
@@ -220,8 +224,14 @@ mod tests {
             },
             workspace: SavedWorkspace {
                 tabs: vec![
-                    SavedTab { node_id: 5, view: "abc".into() },
-                    SavedTab { node_id: 12, view: "ets".into() },
+                    SavedTab {
+                        node_id: 5,
+                        view: "abc".into(),
+                    },
+                    SavedTab {
+                        node_id: 12,
+                        view: "ets".into(),
+                    },
                 ],
                 active_node_id: Some(5),
                 expanded_node_ids: vec![1, 2, 5, 9],

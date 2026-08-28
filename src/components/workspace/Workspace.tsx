@@ -44,6 +44,7 @@ import { CodeView } from "./CodeView"
 import { ViewSwitcher } from "./ViewSwitcher"
 import { SearchPanel } from "./SearchPanel"
 import { EditorFindBar } from "./EditorFindBar"
+import { AIPanel } from "../ai/AIPanel"
 
 /** 原生打开对话框的文件类型过滤器。 */
 const FILE_FILTERS = [
@@ -59,6 +60,10 @@ const HARK_FILTERS = [{ name: "Hark 工作区", extensions: ["hark"] }]
 interface WorkspaceProps {
   /** 项目树侧栏是否收起（状态由 App 持有并持久化，标题栏按钮切换）。 */
   isSidebarCollapsed: boolean
+  /** AI 面板是否展开。 */
+  isAIPanelOpen: boolean
+  /** 打开 AI 设置页。 */
+  onOpenAISettings: () => void
 }
 
 /** 单个标签的完整状态：标签信息 + 双视图内容缓存。 */
@@ -137,7 +142,7 @@ function readOpenMethodInNewTab(): boolean {
  * 有项目时左侧渲染项目树，右侧按标签状态（加载中 / 出错 / 有内容）
  * 渲染对应视图。
  */
-export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
+export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings }: WorkspaceProps) {
   /** 项目树根节点；`null` 表示未打开项目 */
   const [tree, setTree] = useState<TreeNode | null>(null)
   /** 当前项目名（打开文件的文件名） */
@@ -188,6 +193,10 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
   const openSeqRef = useRef(0)
   /** 用户在打开过程中又选择了新文件时暂存的路径，等待确认 */
   const [pendingOpenPath, setPendingOpenPath] = useState<string | null>(null)
+  /** AI 面板宽度（持久化） */
+  const [aiPanelWidth, setAiPanelWidth] = usePersistentState<number>("ai-panel-width", 380)
+  /** AI 面板拖宽状态 */
+  const [isAIResizing, setIsAIResizing] = useState(false)
 
   /** 全部展开项目树。 */
   const expandAll = () =>
@@ -519,6 +528,12 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
             setShowFindBar(true)
           }
           break
+        case "a":
+          if (e.shiftKey) {
+            e.preventDefault()
+            window.dispatchEvent(new Event("hark:toggle-ai-panel"))
+          }
+          break
       }
     }
     window.addEventListener("keydown", onKeyDown)
@@ -727,6 +742,16 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
   const activeLoading = activeTab?.loading[activeTab.view]
   const activeError = activeTab?.errors[activeTab.view]
 
+  /** AI 对话上下文：当前激活标签的代码信息。 */
+  const aiContext = activeTab && activeContent
+    ? {
+        projectName: projectName ?? "",
+        activeNodeName: activeTab.tab.title,
+        activeView: activeTab.view,
+        codeContent: activeContent.body ?? "",
+      }
+    : null
+
   // ---------- 侧栏拖宽 ----------
 
   /** 开始拖动侧栏分隔条：捕获指针并进入列调整状态（禁用过渡动画）。 */
@@ -752,6 +777,33 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
     document.body.style.cursor = ""
     document.body.style.userSelect = ""
     setIsResizing(false)
+  }
+
+  // ---------- AI 面板拖宽 ----------
+
+  /** 开始拖动 AI 面板分隔条。 */
+  const startAIResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    document.body.style.cursor = "col-resize"
+    document.body.style.userSelect = "none"
+    setIsAIResizing(true)
+  }
+  /** 拖动中：将 AI 面板宽度限制在 280~600px（从右侧算）。 */
+  const doAIResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isAIResizing) return
+    const width = Math.min(600, Math.max(280, window.innerWidth - e.clientX))
+    setAiPanelWidth(width)
+  }
+  /** 结束拖动。 */
+  const endAIResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isAIResizing) return
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+    document.body.style.cursor = ""
+    document.body.style.userSelect = ""
+    setIsAIResizing(false)
   }
 
   return (
@@ -999,6 +1051,34 @@ export function Workspace({ isSidebarCollapsed }: WorkspaceProps) {
             />
           )}
         </main>
+
+        {/* AI 面板 */}
+        {isAIPanelOpen && (
+          <div
+            className={cn(
+              "relative flex shrink-0 flex-col",
+              !isAIResizing && "transition-[width] duration-200",
+            )}
+            style={{ width: aiPanelWidth }}
+          >
+            {/* 拖宽分隔条 */}
+            <div
+              role="separator"
+              aria-label="调整 AI 面板宽度"
+              className="absolute inset-y-0 left-0 z-20 w-1.5 cursor-col-resize touch-none"
+              onPointerDown={startAIResize}
+              onPointerMove={doAIResize}
+              onPointerUp={endAIResize}
+              onPointerCancel={endAIResize}
+            />
+            <AIPanel
+              isOpen={isAIPanelOpen}
+              onClose={() => window.dispatchEvent(new Event("hark:toggle-ai-panel"))}
+              onOpenSettings={onOpenAISettings}
+              context={aiContext}
+            />
+          </div>
+        )}
       </div>
       {/* 打开过程中又选择新文件时的确认对话框 */}
       <Modal

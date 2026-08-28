@@ -8,11 +8,13 @@ import {
   Copy,
   Minus,
   PanelLeft,
+  PanelRight,
   Square,
   X,
 } from "lucide-react"
 import { detectDesktopPlatform, detectHostPlatform, DesktopPlatform } from "../lib/platform"
 import { ToolId } from "../lib/navigation"
+import { cn } from "../lib/utils"
 import { useTheme } from "./theme-provider"
 import appIcon from "../assets/app-icon.svg"
 import {
@@ -33,9 +35,11 @@ import {
 interface TitleBarProps {
   onNavigate?: (toolId: ToolId, tabId?: string) => void
   onToggleSidebar: () => void
+  onToggleAIPanel?: () => void
+  isAIPanelOpen?: boolean
 }
 
-export default function TitleBar({ onNavigate, onToggleSidebar }: TitleBarProps) {
+export default function TitleBar({ onNavigate, onToggleSidebar, onToggleAIPanel, isAIPanelOpen }: TitleBarProps) {
   const { theme, setTheme } = useTheme()
   const [isAboutOpen, setIsAboutOpen] = useState(false)
   const [activeTitleMenu, setActiveTitleMenu] = useState<TitleMenuKind | null>(null)
@@ -110,6 +114,11 @@ export default function TitleBar({ onNavigate, onToggleSidebar }: TitleBarProps)
           <TitleButton label="侧栏" onClick={onToggleSidebar}>
             <PanelLeft className="h-[15px] w-[15px] -translate-y-px" />
           </TitleButton>
+            {onToggleAIPanel && (
+              <TitleButton label="AI 面板" onClick={onToggleAIPanel}>
+                <PanelRight className={cn("h-[15px] w-[15px] -translate-y-px", isAIPanelOpen && "text-primary")} />
+              </TitleButton>
+            )}
         </div>
       ) : (
         <div data-tauri-drag-region className="flex h-[var(--titlebar-height)] shrink-0 select-none items-center bg-chrome text-[#5f5f5f] dark:text-default-400">
@@ -117,6 +126,11 @@ export default function TitleBar({ onNavigate, onToggleSidebar }: TitleBarProps)
             <TitleButton label="侧栏" onClick={onToggleSidebar}>
               <PanelLeft className="h-[17px] w-[17px]" />
             </TitleButton>
+            {onToggleAIPanel && (
+              <TitleButton label="AI 面板" onClick={onToggleAIPanel}>
+                <PanelRight className={cn("h-[17px] w-[17px]", isAIPanelOpen && "text-primary")} />
+              </TitleButton>
+            )}
           </div>
 
           <div className="flex h-full items-center gap-0.5 text-[13px]" data-tauri-drag-region>
@@ -138,6 +152,7 @@ export default function TitleBar({ onNavigate, onToggleSidebar }: TitleBarProps)
               {desktopMenuItem("close-project", "关闭项目", undefined, () => window.dispatchEvent(new Event("hark:close-project")))}
               <DropdownSeparator />
               {desktopMenuItem("disassembler", "反编译器设置…", undefined, () => window.dispatchEvent(new Event("hark:configure-tool")))}
+              {desktopMenuItem("ai-settings", "AI 助手设置…", undefined, () => window.dispatchEvent(new Event("hark:configure-ai")))}
               {desktopMenuItem("settings", "设置", undefined, () => onNavigate?.("settings"))}
               <DropdownSeparator />
               {desktopMenuItem("quit", `退出 ${aboutInfo.name}`, "Ctrl+Q", () => void appWindow?.close())}

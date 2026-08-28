@@ -80,7 +80,10 @@ fn resolve_bundled_tool(app: &tauri::AppHandle) -> Option<PathBuf> {
         "ark_disasm"
     };
     app.path()
-        .resolve(format!("resources/bin/{platform}/{exe}"), tauri::path::BaseDirectory::Resource)
+        .resolve(
+            format!("resources/bin/{platform}/{exe}"),
+            tauri::path::BaseDirectory::Resource,
+        )
         .ok()
 }
 
@@ -137,8 +140,7 @@ async fn open_project(path: String, app: tauri::AppHandle) -> Result<OpenProject
     let open_path_clone = open_path.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let inner_state = app_for_blocking.state::<AppState>();
-        let is_cancelled =
-            || inner_state.open_generation.load(Ordering::SeqCst) != my_generation;
+        let is_cancelled = || inner_state.open_generation.load(Ordering::SeqCst) != my_generation;
         Project::open(
             &open_path_clone,
             configured.as_deref(),
@@ -220,7 +222,11 @@ fn save_project_hark(
 /// # Errors
 /// 无已打开项目或节点 ID 无效时返回错误信息。
 #[tauri::command]
-fn get_content(node_id: u32, view: Option<String>, state: State<AppState>) -> Result<NodeContent, String> {
+fn get_content(
+    node_id: u32,
+    view: Option<String>,
+    state: State<AppState>,
+) -> Result<NodeContent, String> {
     let view = view.as_deref().unwrap_or("abc");
     let guard = state.project.lock().unwrap();
     let p = guard.as_ref().ok_or("没有已打开的项目")?;
@@ -380,8 +386,7 @@ async fn search_project(
         let my_generation = state.search_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let guard = state.project.lock().unwrap();
         let project = guard.as_ref().ok_or("没有已打开的项目")?;
-        let is_cancelled =
-            || state.search_generation.load(Ordering::SeqCst) != my_generation;
+        let is_cancelled = || state.search_generation.load(Ordering::SeqCst) != my_generation;
         project.search(&options, &is_cancelled)
     })
     .await
@@ -392,6 +397,7 @@ async fn search_project(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())

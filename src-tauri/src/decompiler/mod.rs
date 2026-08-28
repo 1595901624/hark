@@ -29,7 +29,11 @@ pub fn record_to_arkts(rec: &PaRecord, names: &Names) -> String {
 /// 还原单个方法为独立函数源码。
 pub fn method_to_arkts(owner_display: &str, m: &PaMethod, names: &Names) -> String {
     let s = sig::parse(&m.signature);
-    let owner = if s.owner.is_empty() { owner_display } else { &s.owner };
+    let owner = if s.owner.is_empty() {
+        owner_display
+    } else {
+        &s.owner
+    };
     emit::method_to_arkts(owner, &s.name, &m.signature, &m.body, names)
 }
 

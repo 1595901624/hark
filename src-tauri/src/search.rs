@@ -692,8 +692,7 @@ mod tests {
     fn finds_class_names() {
         let sample = Sample::new();
         let ctx = sample.ctx();
-        let resp = run_ok(&ctx, &opts("example", &[SearchCategory::Class]))
-            .unwrap();
+        let resp = run_ok(&ctx, &opts("example", &[SearchCategory::Class])).unwrap();
         assert_eq!(resp.hits.len(), 1);
         let hit = &resp.hits[0];
         assert_eq!(hit.class_display_name, "com.example.Foo");
@@ -708,8 +707,7 @@ mod tests {
     fn finds_external_class() {
         let sample = Sample::new();
         let ctx = sample.ctx();
-        let resp = run_ok(&ctx, &opts("foreign", &[SearchCategory::Class]))
-            .unwrap();
+        let resp = run_ok(&ctx, &opts("foreign", &[SearchCategory::Class])).unwrap();
         assert_eq!(resp.hits.len(), 1);
         assert_eq!(resp.hits[0].class_display_name, "std.core.Foreign");
     }
@@ -719,8 +717,7 @@ mod tests {
     fn finds_method_names() {
         let sample = Sample::new();
         let ctx = sample.ctx();
-        let resp = run_ok(&ctx, &opts("toString", &[SearchCategory::Method]))
-            .unwrap();
+        let resp = run_ok(&ctx, &opts("toString", &[SearchCategory::Method])).unwrap();
         assert_eq!(resp.hits.len(), 1);
         let hit = &resp.hits[0];
         assert_eq!(hit.class_display_name, "std.core.String");
@@ -734,8 +731,7 @@ mod tests {
     fn finds_field_names() {
         let sample = Sample::new();
         let ctx = sample.ctx();
-        let resp = run_ok(&ctx, &opts("length", &[SearchCategory::Field]))
-            .unwrap();
+        let resp = run_ok(&ctx, &opts("length", &[SearchCategory::Field])).unwrap();
         assert_eq!(resp.hits.len(), 1);
         let hit = &resp.hits[0];
         assert_eq!(hit.line, 4);
@@ -749,11 +745,9 @@ mod tests {
         let sample = Sample::new();
         let ctx = sample.ctx();
         // "lda" 只出现在指令助记符里，不应命中字符串类别
-        let resp = run_ok(&ctx, &opts("lda", &[SearchCategory::String]))
-            .unwrap();
+        let resp = run_ok(&ctx, &opts("lda", &[SearchCategory::String])).unwrap();
         assert!(resp.hits.is_empty());
-        let resp = run_ok(&ctx, &opts("} inside", &[SearchCategory::String]))
-            .unwrap();
+        let resp = run_ok(&ctx, &opts("} inside", &[SearchCategory::String])).unwrap();
         assert_eq!(resp.hits.len(), 1);
         let hit = &resp.hits[0];
         assert_eq!(hit.line, 8);
@@ -769,14 +763,14 @@ mod tests {
         let ctx = sample.ctx();
         let resp = run_ok(
             &ctx,
-            &opts(
-                "length",
-                &[SearchCategory::Field, SearchCategory::Code],
-            ),
+            &opts("length", &[SearchCategory::Field, SearchCategory::Code]),
         )
         .unwrap();
         assert_eq!(resp.hits.len(), 1, "hits: {:?}", resp.hits);
-        assert_eq!(resp.hits[0].categories, vec![SearchCategory::Field, SearchCategory::Code]);
+        assert_eq!(
+            resp.hits[0].categories,
+            vec![SearchCategory::Field, SearchCategory::Code]
+        );
     }
 
     /// 大小写开关行为。
@@ -842,8 +836,7 @@ mod tests {
         sample.resource_entries = vec!["ets/modules/page.abc.map".to_string()];
         sample.resource_nodes.insert(0usize, 900u32);
         let ctx = sample.ctx();
-        let resp = run_ok(&ctx, &opts("modules", &[SearchCategory::Resource]))
-            .unwrap();
+        let resp = run_ok(&ctx, &opts("modules", &[SearchCategory::Resource])).unwrap();
         assert_eq!(resp.hits.len(), 1);
         let hit = &resp.hits[0];
         assert_eq!(hit.class_node_id, 900);

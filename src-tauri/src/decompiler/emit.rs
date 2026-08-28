@@ -12,9 +12,9 @@ use std::collections::{HashMap, HashSet};
 
 use super::expr::{render_expr, BinOp, Expr, Interp, Stmt, UnOp};
 use super::instr::{self, AluOp, CallMode, Cmp, Jump, Kind, Line, Operand, RetKind};
+use super::resolve::Names;
 use super::sig::{self, Sig};
 use crate::pa::{PaMethod, PaRecord};
-use super::resolve::Names;
 
 /// 带原文的解析行（Raw 兜底输出需要原始文本）。
 struct PLine {
@@ -79,7 +79,10 @@ pub fn render_method_body(sig: &Sig, body: &[String], names: &Names) -> String {
             let line = instr::parse_line(raw);
             match &line {
                 Line::Directive(d) if d.is_empty() => None,
-                other => Some(PLine { line: other.clone(), raw: raw.trim_end().to_string() }),
+                other => Some(PLine {
+                    line: other.clone(),
+                    raw: raw.trim_end().to_string(),
+                }),
             }
         })
         .collect();
@@ -181,7 +184,12 @@ pub fn render_method_body(sig: &Sig, body: &[String], names: &Names) -> String {
             },
             _ => (plines.len(), end_jmp),
         };
-        catches.push(TryCatchRegion { start, end_jmp, handler: handler_start, join });
+        catches.push(TryCatchRegion {
+            start,
+            end_jmp,
+            handler: handler_start,
+            join,
+        });
     }
 
     let env = Env {
@@ -216,7 +224,10 @@ pub fn record_to_arkts(rec: &PaRecord, names: &Names) -> String {
         ));
         return out;
     }
-    out.push_str(&format!("// 该文件由 Hark 从方舟字节码还原生成，仅供参考\n// record: {}\n", rec.raw_name));
+    out.push_str(&format!(
+        "// 该文件由 Hark 从方舟字节码还原生成，仅供参考\n// record: {}\n",
+        rec.raw_name
+    ));
     if let Some(sf) = &rec.source_file {
         out.push_str(&format!("// 来源文件: {sf}\n"));
     }
@@ -248,7 +259,11 @@ pub fn record_to_arkts(rec: &PaRecord, names: &Names) -> String {
     for m in ordered {
         let s = sig::parse(&m.signature);
         let body = render_method_body(&s, &m.body, names);
-        let kw = if sig::is_method_async_hint(&m.body) || s.is_async_hint { "async " } else { "" };
+        let kw = if sig::is_method_async_hint(&m.body) || s.is_async_hint {
+            "async "
+        } else {
+            ""
+        };
         let stat = if s.is_static { "static " } else { "" };
         out.push_str(&format!("    {stat}{kw}{} {{\n", method_head(&s)));
         // 方法体文本自带一级缩进，叠加类成员层级
@@ -285,7 +300,11 @@ fn render_global_record(rec: &PaRecord, names: &Names) -> String {
             out.push('\n');
             continue;
         }
-        let kw = if sig::is_method_async_hint(&m.body) || s.is_async_hint { "async " } else { "" };
+        let kw = if sig::is_method_async_hint(&m.body) || s.is_async_hint {
+            "async "
+        } else {
+            ""
+        };
         out.push_str(&format!("export {kw}function {} {{\n", function_head(&s)));
         out.push_str(&render_method_body(&s, &m.body, names));
         out.push_str("}\n\n");
@@ -307,7 +326,11 @@ pub fn method_to_arkts(
     } else {
         format!("{}.{}", safe_ident(owner), method_name)
     };
-    let kw = if sig::is_method_async_hint(body) || s.is_async_hint { "async " } else { "" };
+    let kw = if sig::is_method_async_hint(body) || s.is_async_hint {
+        "async "
+    } else {
+        ""
+    };
     let mut out = String::new();
     out.push_str(&format!("// {owner_label} 的字节码还原\n"));
     out.push_str(&format!("export {kw}function {} {{\n", function_head(&s)));
@@ -553,7 +576,13 @@ fn try_if(st: &mut Interp, out: &mut Vec<Stmt>, lo: usize, hi: usize, env: &Env)
 }
 
 /// 若 `i` 是某个 `.catchall` 区域的起始，生成 try/catch 结构。
-fn try_catch_at(st: &mut Interp, out: &mut Vec<Stmt>, i: usize, hi: usize, env: &Env) -> Option<usize> {
+fn try_catch_at(
+    st: &mut Interp,
+    out: &mut Vec<Stmt>,
+    i: usize,
+    hi: usize,
+    env: &Env,
+) -> Option<usize> {
     let region = *env.catches.iter().find(|t| t.start == i)?;
     if region.end_jmp > hi || region.join > hi {
         return None;
@@ -575,7 +604,10 @@ fn try_catch_at(st: &mut Interp, out: &mut Vec<Stmt>, i: usize, hi: usize, env: 
         this_key: env.this_key,
         catches: &inner,
     };
-    let catch_env = Env { catches: &inner, ..body_env };
+    let catch_env = Env {
+        catches: &inner,
+        ..body_env
+    };
 
     let pre = st.snapshot();
     let mut body_st = pre.clone();
@@ -586,7 +618,13 @@ fn try_catch_at(st: &mut Interp, out: &mut Vec<Stmt>, i: usize, hi: usize, env: 
     let mut catch_out: Vec<Stmt> = vec![];
     // 异常对象注入累加器：处理体开头的 sta 会把它存入局部
     catch_st.acc = Some(Expr::Ident("e".into()));
-    walk(&mut catch_st, &mut catch_out, region.handler, region.join.max(region.handler), &catch_env);
+    walk(
+        &mut catch_st,
+        &mut catch_out,
+        region.handler,
+        region.join.max(region.handler),
+        &catch_env,
+    );
     flush_side_effects(&mut catch_st, &mut catch_out);
 
     let mut merged = Interp::merge(&mut body_st, &mut catch_st);
@@ -595,12 +633,21 @@ fn try_catch_at(st: &mut Interp, out: &mut Vec<Stmt>, i: usize, hi: usize, env: 
     }
     *st = merged;
 
-    out.push(Stmt::TryCatch { body: body_out, catch: catch_out });
+    out.push(Stmt::TryCatch {
+        body: body_out,
+        catch: catch_out,
+    });
     Some(region.join)
 }
 
 /// 尝试在循环头 `h` 处识别 while 循环。成功返回循环之后的下标。
-fn try_while(st: &mut Interp, out: &mut Vec<Stmt>, h: usize, hi: usize, env: &Env) -> Option<usize> {
+fn try_while(
+    st: &mut Interp,
+    out: &mut Vec<Stmt>,
+    h: usize,
+    hi: usize,
+    env: &Env,
+) -> Option<usize> {
     // 找到跳回循环头的闭合 jmp
     let mut close: Option<usize> = None;
     for x in (h + 1)..hi {
@@ -666,7 +713,10 @@ fn try_while(st: &mut Interp, out: &mut Vec<Stmt>, h: usize, hi: usize, env: &En
         out.push(d);
     }
     *st = post;
-    out.push(Stmt::While { cond, body: body_stmts });
+    out.push(Stmt::While {
+        cond,
+        body: body_stmts,
+    });
     Some((j + 1).min(hi))
 }
 
@@ -712,7 +762,10 @@ fn build_pred_from_branch(st: &mut Interp, branch: &Kind, insn: &instr::Insn) ->
         if *zero {
             let x = st.take_acc();
             return match cmp {
-                Cmp::Eq => Expr::Un { op: UnOp::Not, e: Box::new(x) },
+                Cmp::Eq => Expr::Un {
+                    op: UnOp::Not,
+                    e: Box::new(x),
+                },
                 _ => x,
             };
         }
@@ -723,7 +776,11 @@ fn build_pred_from_branch(st: &mut Interp, branch: &Kind, insn: &instr::Insn) ->
             Some(op) => literal_expr(op),
             None => Expr::Undefined,
         };
-        return Expr::Bin { op: cmp_op(*cmp), l: Box::new(x), r: Box::new(y) };
+        return Expr::Bin {
+            op: cmp_op(*cmp),
+            l: Box::new(x),
+            r: Box::new(y),
+        };
     }
     Expr::Bool(true)
 }
@@ -754,8 +811,14 @@ fn literal_expr(op: &Operand) -> Expr {
 /// 取反谓词（双重否定化简）。
 fn invert_pred(e: Expr) -> Expr {
     match e {
-        Expr::Un { op: UnOp::Not, e: inner } => *inner,
-        other => Expr::Un { op: UnOp::Not, e: Box::new(other) },
+        Expr::Un {
+            op: UnOp::Not,
+            e: inner,
+        } => *inner,
+        other => Expr::Un {
+            op: UnOp::Not,
+            e: Box::new(other),
+        },
     }
 }
 
@@ -789,7 +852,11 @@ fn bin_of(op: AluOp, l: Expr, r: Expr) -> Expr {
         AluOp::UShr => BinOp::UShr,
         _ => BinOp::Add,
     };
-    Expr::Bin { op: b, l: Box::new(l), r: Box::new(r) }
+    Expr::Bin {
+        op: b,
+        l: Box::new(l),
+        r: Box::new(r),
+    }
 }
 
 // ---------- 单条指令解释 ----------
@@ -833,7 +900,12 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
             if let Some(old) = &st.acc {
                 if matches!(
                     op,
-                    Operand::Imm(_) | Operand::Float(_) | Operand::Bool(_) | Operand::Str(_) | Operand::Null | Operand::Undefined
+                    Operand::Imm(_)
+                        | Operand::Float(_)
+                        | Operand::Bool(_)
+                        | Operand::Str(_)
+                        | Operand::Null
+                        | Operand::Undefined
                 ) && is_side_effectful(old)
                 {
                     let e = st.take_acc();
@@ -864,15 +936,25 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
         Kind::AluUnary(op) => {
             let e = operand_expr(st, insn.operands.first());
             let u = match op {
-                AluOp::Neg => Expr::Un { op: UnOp::Neg, e: Box::new(e) },
-                _ => Expr::Un { op: UnOp::Not, e: Box::new(e) },
+                AluOp::Neg => Expr::Un {
+                    op: UnOp::Neg,
+                    e: Box::new(e),
+                },
+                _ => Expr::Un {
+                    op: UnOp::Not,
+                    e: Box::new(e),
+                },
             };
             st.acc = Some(u);
         }
         Kind::CmpSet(cmp) => {
             let r = operand_expr(st, insn.operands.get(1));
             let l = operand_expr(st, insn.operands.first());
-            st.acc = Some(Expr::Bin { op: cmp_op(cmp), l: Box::new(l), r: Box::new(r) });
+            st.acc = Some(Expr::Bin {
+                op: cmp_op(cmp),
+                l: Box::new(l),
+                r: Box::new(r),
+            });
         }
         Kind::Jmp(..) => {
             // 分支统一由 walk / try_if 结构化处理；走到这里的属于未匹配形态
@@ -901,7 +983,11 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
                 .filter_map(|o| o.reg_key())
                 .last()
                 .unwrap_or(env.this_key);
-            let obj = if obj_key == u16::MAX { Expr::Undefined } else { st.read_reg(obj_key) };
+            let obj = if obj_key == u16::MAX {
+                Expr::Undefined
+            } else {
+                st.read_reg(obj_key)
+            };
             let val = st.take_acc();
             flush!();
             out.push(Stmt::Assign {
@@ -954,7 +1040,11 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
                 .iter()
                 .find_map(|o| o.reg_key())
                 .unwrap_or(env.this_key);
-            let obj = if obj == u16::MAX { Expr::Undefined } else { st.read_reg(obj) };
+            let obj = if obj == u16::MAX {
+                Expr::Undefined
+            } else {
+                st.read_reg(obj)
+            };
             st.acc = Some(Expr::Prop(Box::new(obj), name, false));
         }
         Kind::StorePrivateProp(name) => {
@@ -963,7 +1053,11 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
                 .iter()
                 .find_map(|o| o.reg_key())
                 .unwrap_or(env.this_key);
-            let obj = if obj_key == u16::MAX { Expr::Undefined } else { st.read_reg(obj_key) };
+            let obj = if obj_key == u16::MAX {
+                Expr::Undefined
+            } else {
+                st.read_reg(obj_key)
+            };
             let val = st.take_acc();
             flush!();
             out.push(Stmt::Assign {
@@ -973,7 +1067,11 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
             return StepResult::Normal;
         }
         Kind::DefineProperty(name) => {
-            let obj = if env.this_key == u16::MAX { Expr::Undefined } else { st.read_reg(env.this_key) };
+            let obj = if env.this_key == u16::MAX {
+                Expr::Undefined
+            } else {
+                st.read_reg(env.this_key)
+            };
             let val = st.take_acc();
             flush!();
             out.push(Stmt::Assign {
@@ -1035,7 +1133,12 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
                 .iter()
                 .find_map(|o| o.reg_key())
                 .map(|r| st.read_reg(r))
-                .or_else(|| insn.operands.iter().find_map(|o| o.as_str()).map(|s| Expr::Str(s.to_string())))
+                .or_else(|| {
+                    insn.operands
+                        .iter()
+                        .find_map(|o| o.as_str())
+                        .map(|s| Expr::Str(s.to_string()))
+                })
                 .unwrap_or(Expr::Undefined);
             st.acc = Some(Expr::Call {
                 callee: Box::new(Expr::Ident("import".into())),
@@ -1085,7 +1188,11 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
                     e: Box::new(acc),
                 };
                 let throw = Stmt::Throw(Expr::Str(format!("{name} 未初始化")));
-                out.push(Stmt::If { cond, then: vec![throw], els: None });
+                out.push(Stmt::If {
+                    cond,
+                    then: vec![throw],
+                    els: None,
+                });
             }
         }
         Kind::CheckSuper => {
@@ -1121,7 +1228,10 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
         }
         Kind::TypeOf => {
             let e = operand_expr(st, insn.operands.first());
-            st.acc = Some(Expr::Un { op: UnOp::Typeof, e: Box::new(e) });
+            st.acc = Some(Expr::Un {
+                op: UnOp::Typeof,
+                e: Box::new(e),
+            });
         }
         Kind::CopyRestArgs => {
             st.acc = Some(Expr::Unknown("剩余参数 ...rest".into()));
@@ -1132,7 +1242,10 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
         Kind::StoreGlobal(name) => {
             let val = st.take_acc();
             flush!();
-            out.push(Stmt::Assign { lhs: global_expr(&name), expr: val });
+            out.push(Stmt::Assign {
+                lhs: global_expr(&name),
+                expr: val,
+            });
             return StepResult::Normal;
         }
         Kind::LoadModule(id) => {
@@ -1158,7 +1271,11 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
                 }
             }
             let args = collect_args(st, &insn, shape);
-            st.acc = Some(Expr::Call { callee: Box::new(callee), args, optional: false });
+            st.acc = Some(Expr::Call {
+                callee: Box::new(callee),
+                args,
+                optional: false,
+            });
         }
         Kind::NewObj { class, argc, first } => {
             let cname = class
@@ -1171,7 +1288,9 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
                 })
                 .unwrap_or_else(|| "__class".into());
             let args = match (first, argc) {
-                (Some(f), n) if n > 0 => (f..f.saturating_add(n as u16)).map(|r| st.read_reg(r)).collect(),
+                (Some(f), n) if n > 0 => (f..f.saturating_add(n as u16))
+                    .map(|r| st.read_reg(r))
+                    .collect(),
                 _ => vec![],
             };
             let mut stmts = vec![];
@@ -1192,7 +1311,11 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
             st.acc = Some(Expr::Arr(vec![]));
         }
         Kind::BufferLiteral { array, id } => {
-            let hint = format!("字面量池 #{}（{}）", id, if array { "数组" } else { "对象" });
+            let hint = format!(
+                "字面量池 #{}（{}）",
+                id,
+                if array { "数组" } else { "对象" }
+            );
             st.acc = Some(Expr::Unknown(hint.clone()));
             flush!();
             out.push(Stmt::Comment(hint));
@@ -1214,7 +1337,10 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
             let name = st.lex_name(d, s);
             let val = st.take_acc();
             flush!();
-            out.push(Stmt::Assign { lhs: Expr::Ident(name), expr: val });
+            out.push(Stmt::Assign {
+                lhs: Expr::Ident(name),
+                expr: val,
+            });
             return StepResult::Normal;
         }
         Kind::LexLoad(d, s) => {
@@ -1349,7 +1475,11 @@ fn global_expr(name: &str) -> Expr {
     if is_plain_ident(name) {
         Expr::Ident(name.to_string())
     } else {
-        Expr::Prop(Box::new(Expr::Ident("globalThis".into())), name.to_string(), true)
+        Expr::Prop(
+            Box::new(Expr::Ident("globalThis".into())),
+            name.to_string(),
+            true,
+        )
     }
 }
 
@@ -1357,10 +1487,22 @@ fn global_expr(name: &str) -> Expr {
 pub fn safe_ident(name: &str) -> String {
     let cleaned: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '$' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let cleaned = cleaned.trim_matches('_').to_string();
-    if cleaned.is_empty() || cleaned.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+    if cleaned.is_empty()
+        || cleaned
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false)
+    {
         format!("_{cleaned}")
     } else {
         cleaned
@@ -1438,7 +1580,16 @@ pub fn render_stmts(stmts: &[Stmt], depth: usize, out: &mut String) {
 /// 解析 `.field` 行为 (修饰符, 名称, 类型)。
 fn parse_field(field: &str) -> (String, String, &'static str) {
     let body = field.strip_prefix(".field").unwrap_or(field).trim();
-    let flags = ["public", "private", "protected", "internal", "static", "<static>", "readonly", "final"];
+    let flags = [
+        "public",
+        "private",
+        "protected",
+        "internal",
+        "static",
+        "<static>",
+        "readonly",
+        "final",
+    ];
     let mut mods = String::new();
     let mut name = String::new();
     for tok in body.split_whitespace() {
@@ -1481,7 +1632,10 @@ fn class_modifiers(flags: Option<&str>) -> String {
 
 /// 方法在 record 中的原顺序（稳定排序键）。
 fn method_order(rec: &PaRecord, m: &PaMethod) -> usize {
-    rec.methods.iter().position(|x| x.signature == m.signature).unwrap_or(usize::MAX)
+    rec.methods
+        .iter()
+        .position(|x| x.signature == m.signature)
+        .unwrap_or(usize::MAX)
 }
 
 #[cfg(test)]
@@ -1505,8 +1659,14 @@ mod tests {
         ]);
         let text = render_method_body(&sig, &body, &Names::default());
         // 常量传播后直接内联：2 + p1
-        assert!(text.contains("return") && text.contains("+"), "text: {text}");
-        assert!(text.contains("(2 + p1)") || text.contains("2 + p1"), "text: {text}");
+        assert!(
+            text.contains("return") && text.contains("+"),
+            "text: {text}"
+        );
+        assert!(
+            text.contains("(2 + p1)") || text.contains("2 + p1"),
+            "text: {text}"
+        );
     }
 
     #[test]
@@ -1557,7 +1717,10 @@ mod tests {
         // 循环体里的 console.log() 调用必须保留为语句
         assert!(text.contains("console.log();"), "text: {text}");
         // 计数器递减
-        assert!(text.contains("v0 = v0 - 1") || text.contains("- 1;"), "text: {text}");
+        assert!(
+            text.contains("v0 = v0 - 1") || text.contains("- 1;"),
+            "text: {text}"
+        );
     }
 
     #[test]
@@ -1586,7 +1749,10 @@ mod tests {
         let sig = sig::parse("void LEntry;.weird() <static true>");
         let body = lines(&["\tldai 0x1", "\tfroptrange123 v1, v2", "\treturnundefined"]);
         let text = render_method_body(&sig, &body, &Names::default());
-        assert!(text.contains("未还原的指令") || text.contains("froptrange123"), "text: {text}");
+        assert!(
+            text.contains("未还原的指令") || text.contains("froptrange123"),
+            "text: {text}"
+        );
         assert!(text.contains("return;"));
     }
 
@@ -1617,7 +1783,10 @@ mod tests {
         let pa = PaFile::parse(pa_text);
         let names = Names::default();
         let out = crate::decompiler::record_to_arkts(&pa.records[0], &names);
-        assert!(out.contains("class entry_src_main_ets_pages_Index {"), "out: {out}");
+        assert!(
+            out.contains("class entry_src_main_ets_pages_Index {"),
+            "out: {out}"
+        );
         assert!(out.contains("message: any"));
         assert!(out.contains("constructor(p1: any)"));
         assert!(out.contains("static get(p1: any): any"));

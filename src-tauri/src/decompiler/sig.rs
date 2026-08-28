@@ -91,7 +91,10 @@ pub fn parse(signature: &str) -> Sig {
     // head = `<返回类型> <限定名>`；限定名取最后一个空格后的 token
     let qualified = head.trim().rsplit(' ').next().unwrap_or("").trim();
     let (owner, raw_name) = match qualified.rfind('.') {
-        Some(pos) => (qualified[..pos].to_string(), qualified[pos + 1..].to_string()),
+        Some(pos) => (
+            qualified[..pos].to_string(),
+            qualified[pos + 1..].to_string(),
+        ),
         None => (String::new(), qualified.to_string()),
     };
 
@@ -132,8 +135,7 @@ impl Sig {
 
     /// 是否模块入口函数（funcmain / func_main / #*#main）。
     pub fn is_module_main(&self) -> bool {
-        matches!(self.name.as_str(), "funcmain" | "func_main" | "main")
-            && self.owner.is_empty()
+        matches!(self.name.as_str(), "funcmain" | "func_main" | "main") && self.owner.is_empty()
     }
 
     /// 是否工具链合成的初始化方法（模块入口 / static_initializer）。
@@ -148,8 +150,7 @@ impl Sig {
     /// 把 panda 类型名映射为 ArkTS 类型标注。
     pub fn ts_type(panda_type: &str) -> &'static str {
         match panda_type {
-            "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
-            | "f32" | "f64" => "number",
+            "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "f32" | "f64" => "number",
             "bool" => "boolean",
             "void" => "void",
             "any" | "#Any" => "any",

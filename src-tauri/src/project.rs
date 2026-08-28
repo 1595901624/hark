@@ -199,8 +199,11 @@ impl Project {
                                 .map_err(|e| format!("创建目录失败: {e}"))?;
                             let target = target_dir.join("entry.abc");
                             let mut bytes = Vec::new();
-                            entry.read_to_end(&mut bytes).map_err(|e| format!("读取 `{name}`: {e}"))?;
-                            fs::write(&target, &bytes).map_err(|e| format!("写入临时文件失败: {e}"))?;
+                            entry
+                                .read_to_end(&mut bytes)
+                                .map_err(|e| format!("读取 `{name}`: {e}"))?;
+                            fs::write(&target, &bytes)
+                                .map_err(|e| format!("写入临时文件失败: {e}"))?;
                             abc_files.push((name, target));
                         } else {
                             archive_entries.push(name);
@@ -276,7 +279,12 @@ impl Project {
         for ui in 0..self.units.len() {
             let (short_name, num_records) = {
                 let unit = &self.units[ui];
-                let short = unit.name.rsplit('/').next().unwrap_or(&unit.name).to_string();
+                let short = unit
+                    .name
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&unit.name)
+                    .to_string();
                 (short, unit.pa.records.len())
             };
             let unit_id = self.alloc_id();
@@ -295,7 +303,13 @@ impl Project {
                 let display = self.units[ui].pa.records[ri].display_name.clone();
                 insert_record(&mut package_root, &display, ri);
             }
-            flatten_packages(self, &mut package_root, ui, &mut unit_node.children, String::new());
+            flatten_packages(
+                self,
+                &mut package_root,
+                ui,
+                &mut unit_node.children,
+                String::new(),
+            );
 
             root.children.push(unit_node);
         }
@@ -356,7 +370,11 @@ impl Project {
                     body,
                 })
             }
-            Some(NodePayload::Method { unit, record, method }) => {
+            Some(NodePayload::Method {
+                unit,
+                record,
+                method,
+            }) => {
                 let u = &self.units[*unit];
                 let rec = u.pa.records.get(*record).ok_or("record missing")?;
                 let m = rec.methods.get(*method).ok_or("method missing")?;
@@ -387,8 +405,16 @@ impl Project {
     /// 返回所属类节点 ID 与该方法在 abc / ets 视图中的 1-based 行号；
     /// 行号为 0 表示未找到对应声明行。非方法节点返回错误。
     pub fn method_location(&self, node_id: u32) -> Result<MethodLocation, String> {
-        let payload = self.nodes.get(&node_id).ok_or(format!("未知节点 #{node_id}"))?;
-        let NodePayload::Method { unit, record, method } = payload else {
+        let payload = self
+            .nodes
+            .get(&node_id)
+            .ok_or(format!("未知节点 #{node_id}"))?;
+        let NodePayload::Method {
+            unit,
+            record,
+            method,
+        } = payload
+        else {
             return Err("该节点不是方法节点".into());
         };
 
@@ -473,7 +499,11 @@ impl Project {
                     body,
                 })
             }
-            Some(NodePayload::Method { unit, record, method }) => {
+            Some(NodePayload::Method {
+                unit,
+                record,
+                method,
+            }) => {
                 let u = &self.units[*unit];
                 let rec = u.pa.records.get(*record).ok_or("record missing")?;
                 let m = rec.methods.get(*method).ok_or("method missing")?;
@@ -495,8 +525,7 @@ impl Project {
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
         }
-        fs::write(target, content.body)
-            .map_err(|e| format!("写入 {target:?} 失败: {e}"))
+        fs::write(target, content.body).map_err(|e| format!("写入 {target:?} 失败: {e}"))
     }
 
     /// 导出指定节点的反汇编文本（abc 视图）到目标路径（`.pa` 格式）。
@@ -508,8 +537,7 @@ impl Project {
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
         }
-        fs::write(target, content.body)
-            .map_err(|e| format!("写入 {target:?} 失败: {e}"))
+        fs::write(target, content.body).map_err(|e| format!("写入 {target:?} 失败: {e}"))
     }
 
     /// 把项目包含的全部原始 `.abc` 字节码批量导出到目标目录。
@@ -536,9 +564,8 @@ impl Project {
         match self.kind.as_str() {
             "abc" => {
                 let target = root.join(&self.name);
-                fs::copy(&self.source_path, &target).map_err(|e| {
-                    format!("复制 {}: {e}", self.source_path.display())
-                })?;
+                fs::copy(&self.source_path, &target)
+                    .map_err(|e| format!("复制 {}: {e}", self.source_path.display()))?;
                 Ok(vec![self.name.clone()])
             }
             "hap" | "har" | "app" | "zip" => {
@@ -563,7 +590,9 @@ impl Project {
                         fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
                     }
                     let mut bytes = Vec::new();
-                    entry.read_to_end(&mut bytes).map_err(|e| format!("读取 `{name}`: {e}"))?;
+                    entry
+                        .read_to_end(&mut bytes)
+                        .map_err(|e| format!("读取 `{name}`: {e}"))?;
                     fs::write(&target, &bytes).map_err(|e| format!("写入 {target:?} 失败: {e}"))?;
                     written.push(name);
                 }
@@ -599,7 +628,8 @@ impl Project {
         fs::create_dir_all(&root).map_err(|e| format!("创建目录失败: {e}"))?;
 
         let single_unit = self.units.len() == 1;
-        let mut used_unit_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut used_unit_dirs: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         let mut written: Vec<String> = Vec::new();
 
         for unit in &self.units {
@@ -623,8 +653,7 @@ impl Project {
             for ri in 0..unit.pa.records.len() {
                 let display = &unit.pa.records[ri].display_name;
                 let (parents, leaf) = split_record_name(display);
-                let at_root =
-                    parents.is_empty() || leaf.starts_with('<') || display.contains(' ');
+                let at_root = parents.is_empty() || leaf.starts_with('<') || display.contains(' ');
                 let leaf = sanitize_filename(&leaf);
                 let mut folder = unit_dir.clone();
                 if !at_root {
@@ -648,8 +677,7 @@ impl Project {
                 let target = folder.join(&file_name);
                 fs::create_dir_all(&folder).map_err(|e| format!("创建目录失败: {e}"))?;
                 let body = unit.pa.render_record(ri).unwrap_or_default();
-                fs::write(&target, body)
-                    .map_err(|e| format!("写入 {target:?} 失败: {e}"))?;
+                fs::write(&target, body).map_err(|e| format!("写入 {target:?} 失败: {e}"))?;
                 let rel = target.strip_prefix(&root).unwrap_or(&target);
                 written.push(rel.to_string_lossy().replace('\\', "/"));
             }
@@ -846,7 +874,11 @@ fn flatten_packages(
         let (short, method_names) = {
             let rec: &PaRecord = &project.units[unit].pa.records[*ri];
             let (_, leaf) = split_record_name(&rec.display_name);
-            let names = rec.methods.iter().map(|m| m.name.clone()).collect::<Vec<_>>();
+            let names = rec
+                .methods
+                .iter()
+                .map(|m| m.name.clone())
+                .collect::<Vec<_>>();
             (leaf, names)
         };
         let id = project.alloc_id();
@@ -857,7 +889,9 @@ fn flatten_packages(
             detail: format!("{} methods", method_names.len()),
             children: vec![],
         };
-        project.nodes.insert(id, NodePayload::Class { unit, record: *ri });
+        project
+            .nodes
+            .insert(id, NodePayload::Class { unit, record: *ri });
         project.class_nodes.insert((unit, *ri), id);
         for (mi, mname) in method_names.iter().enumerate() {
             let mid = project.alloc_id();
@@ -868,9 +902,14 @@ fn flatten_packages(
                 detail: String::new(),
                 children: vec![],
             });
-            project
-                .nodes
-                .insert(mid, NodePayload::Method { unit, record: *ri, method: mi });
+            project.nodes.insert(
+                mid,
+                NodePayload::Method {
+                    unit,
+                    record: *ri,
+                    method: mi,
+                },
+            );
         }
         out.push(tn);
     }
@@ -1082,7 +1121,14 @@ mod tests {
             written,
             vec!["Global.pa", "com/example/Bar.pa", "com/example/Foo.pa"]
         );
-        let foo = fs::read_to_string(out_dir.join("demo").join("com").join("example").join("Foo.pa")).unwrap();
+        let foo = fs::read_to_string(
+            out_dir
+                .join("demo")
+                .join("com")
+                .join("example")
+                .join("Foo.pa"),
+        )
+        .unwrap();
         assert!(foo.contains(".record Lcom/example/Foo; {"));
         assert!(foo.contains(".function any Lcom/example/Foo;.bar() {"));
         assert!(foo.contains("return"));
@@ -1096,9 +1142,7 @@ mod tests {
         // Lcom.Foo; 与 Lcom/Foo; 的展示名均为 com.Foo，导出路径相同需去重
         let make_unit = |name: &str| AbcUnit {
             name: name.to_string(),
-            pa: crate::pa::PaFile::parse(
-                ".record Lcom.Foo; {\n}\n.record Lcom/Foo; {\n}\n",
-            ),
+            pa: crate::pa::PaFile::parse(".record Lcom.Foo; {\n}\n.record Lcom/Foo; {\n}\n"),
             names: crate::decompiler::LiteralNames::default(),
         };
         let tmp = std::env::temp_dir().join(format!("hark-pa2-test-{}", std::process::id()));
@@ -1137,9 +1181,24 @@ mod tests {
                 "modules/com/Foo.pa",
             ]
         );
-        assert!(out_dir.join("app").join("modules").join("com").join("Foo.pa").exists());
-        assert!(out_dir.join("app").join("modules").join("com").join("Foo-2.pa").exists());
-        assert!(out_dir.join("app").join("modules-2").join("com").join("Foo.pa").exists());
+        assert!(out_dir
+            .join("app")
+            .join("modules")
+            .join("com")
+            .join("Foo.pa")
+            .exists());
+        assert!(out_dir
+            .join("app")
+            .join("modules")
+            .join("com")
+            .join("Foo-2.pa")
+            .exists());
+        assert!(out_dir
+            .join("app")
+            .join("modules-2")
+            .join("com")
+            .join("Foo.pa")
+            .exists());
 
         let _ = fs::remove_dir_all(&tmp);
     }

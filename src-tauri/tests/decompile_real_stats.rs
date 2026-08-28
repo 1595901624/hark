@@ -95,6 +95,12 @@ fn scan_blocks(text: &str, blocks: &mut usize, ops: &mut BTreeMap<String, usize>
 /// 判断 token 是否形如标签名。
 fn is_label(tok: &str) -> bool {
     !tok.is_empty()
-        && tok.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_' || c == '$').unwrap_or(false)
-        && tok.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '.'))
+        && tok
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+            .unwrap_or(false)
+        && tok
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '.'))
 }

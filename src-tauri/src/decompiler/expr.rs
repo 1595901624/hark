@@ -111,15 +111,33 @@ pub enum Expr {
     /// 下标访问 base[idx]。
     Index(Box<Expr>, Box<Expr>),
     /// 调用。callee 为 `super` 时渲染 `super(...)`。
-    Call { callee: Box<Expr>, args: Vec<Expr>, optional: bool },
+    Call {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+        optional: bool,
+    },
     /// new 表达式。
-    New { class: String, args: Vec<Expr> },
-    Bin { op: BinOp, l: Box<Expr>, r: Box<Expr> },
-    Un { op: UnOp, e: Box<Expr> },
+    New {
+        class: String,
+        args: Vec<Expr>,
+    },
+    Bin {
+        op: BinOp,
+        l: Box<Expr>,
+        r: Box<Expr>,
+    },
+    Un {
+        op: UnOp,
+        e: Box<Expr>,
+    },
     /// instanceof 关系运算。
     Instanceof(Box<Expr>, Box<Expr>),
     Await(Box<Expr>),
-    Ternary { c: Box<Expr>, t: Box<Expr>, f: Box<Expr> },
+    Ternary {
+        c: Box<Expr>,
+        t: Box<Expr>,
+        f: Box<Expr>,
+    },
     /// 对象字面量。
     Obj(Vec<(String, Expr)>),
     /// 数组字面量。
@@ -137,10 +155,9 @@ pub enum Expr {
 /// 判断标识符是否为合法的 JS/TS 点号属性名。
 fn is_plain_prop(name: &str) -> bool {
     !name.is_empty()
-        && name
-            .chars()
-            .enumerate()
-            .all(|(i, c)| c == '$' || c == '_' || c.is_ascii_alphabetic() || (i > 0 && c.is_ascii_digit()))
+        && name.chars().enumerate().all(|(i, c)| {
+            c == '$' || c == '_' || c.is_ascii_alphabetic() || (i > 0 && c.is_ascii_digit())
+        })
 }
 
 /// 字符串字面量的 TS 转义。
@@ -165,7 +182,11 @@ fn render_float(f: f64) -> String {
     if f.is_nan() {
         "NaN".into()
     } else if f.is_infinite() {
-        if f > 0.0 { "Infinity".into() } else { "-Infinity".into() }
+        if f > 0.0 {
+            "Infinity".into()
+        } else {
+            "-Infinity".into()
+        }
     } else if f.fract() == 0.0 && f.abs() < 1e15 {
         format!("{:.1}", f)
     } else {
@@ -175,7 +196,13 @@ fn render_float(f: f64) -> String {
 
 /// 把表达式渲染为源码文本；`parent_prec` 为外层允许的最小优先级。
 pub fn render_expr(e: &Expr, parent_prec: u8) -> String {
-    let wrap = |s: String, prec: u8| if prec < parent_prec { format!("({s})") } else { s };
+    let wrap = |s: String, prec: u8| {
+        if prec < parent_prec {
+            format!("({s})")
+        } else {
+            s
+        }
+    };
     match e {
         Expr::Ident(n) => n.clone(),
         Expr::This => "this".into(),
@@ -198,7 +225,11 @@ pub fn render_expr(e: &Expr, parent_prec: u8) -> String {
             let i = render_expr(idx, 1);
             format!("{b}[{i}]")
         }
-        Expr::Call { callee, args, optional } => {
+        Expr::Call {
+            callee,
+            args,
+            optional,
+        } => {
             let c = render_expr(callee, 11);
             let a: Vec<String> = args.iter().map(|x| render_expr(x, 1)).collect();
             let q = if *optional { "?." } else { "" };
@@ -220,11 +251,7 @@ pub fn render_expr(e: &Expr, parent_prec: u8) -> String {
         }
         Expr::Instanceof(l, r) => {
             // instanceof 与关系运算符同优先级
-            let text = format!(
-                "{} instanceof {}",
-                render_expr(l, 4),
-                render_expr(r, 4)
-            );
+            let text = format!("{} instanceof {}", render_expr(l, 4), render_expr(r, 4));
             wrap(text, 3)
         }
         Expr::Un { op, e } => {
@@ -289,7 +316,12 @@ pub struct Slot {
 
 impl Slot {
     fn new(expr: Expr) -> Self {
-        Slot { expr, used: false, name: None, declared: false }
+        Slot {
+            expr,
+            used: false,
+            name: None,
+            declared: false,
+        }
     }
 }
 
@@ -307,7 +339,11 @@ pub enum Stmt {
     /// 抛出。
     Throw(Expr),
     /// 条件分支。
-    If { cond: Expr, then: Vec<Stmt>, els: Option<Vec<Stmt>> },
+    If {
+        cond: Expr,
+        then: Vec<Stmt>,
+        els: Option<Vec<Stmt>>,
+    },
     /// 循环。
     While { cond: Expr, body: Vec<Stmt> },
     /// try/catch 区域（catch 参数名固定为 e）。
@@ -361,13 +397,18 @@ impl Interp {
         if let Some(p) = self.params.get(&r) {
             return Expr::Ident(p.clone());
         }
-        let slot = self.regs.entry(r).or_insert_with(|| Slot::new(Expr::Undefined));
+        let slot = self
+            .regs
+            .entry(r)
+            .or_insert_with(|| Slot::new(Expr::Undefined));
         slot.used = true;
         if let (Some(name), false) = (&slot.name, slot.declared) {
             // 首次以命名形式读取：补一条声明，令后续覆盖成为普通赋值
             slot.declared = true;
-            self.pending_decls
-                .push(Stmt::Decl { name: name.clone(), init: Some(slot.expr.clone()) });
+            self.pending_decls.push(Stmt::Decl {
+                name: name.clone(),
+                init: Some(slot.expr.clone()),
+            });
         }
         match &slot.name {
             Some(n) => Expr::Ident(n.clone()),
@@ -382,11 +423,17 @@ impl Interp {
     pub fn write_reg(&mut self, r: u16, expr: Expr) {
         if self.params.contains_key(&r) {
             let name = self.params[&r].clone();
-            self.pending_decls.push(Stmt::Assign { lhs: Expr::Ident(name), expr });
+            self.pending_decls.push(Stmt::Assign {
+                lhs: Expr::Ident(name),
+                expr,
+            });
             return;
         }
         let needs_materialize = {
-            let slot = self.regs.entry(r).or_insert_with(|| Slot::new(Expr::Undefined));
+            let slot = self
+                .regs
+                .entry(r)
+                .or_insert_with(|| Slot::new(Expr::Undefined));
             slot.used || slot.name.is_some()
         };
         if !needs_materialize {
@@ -403,10 +450,16 @@ impl Interp {
         };
         let declared = self.regs[&r].declared;
         self.pending_decls.push(if declared {
-            Stmt::Assign { lhs: Expr::Ident(name), expr }
+            Stmt::Assign {
+                lhs: Expr::Ident(name),
+                expr,
+            }
         } else {
             self.regs.get_mut(&r).unwrap().declared = true;
-            Stmt::Decl { name, init: Some(expr) }
+            Stmt::Decl {
+                name,
+                init: Some(expr),
+            }
         });
     }
 
@@ -437,18 +490,34 @@ impl Interp {
     /// 合并两个分支结束时的状态：不一致的寄存器降级为未知命名变量。
     pub fn merge(a: &mut Interp, b: &mut Interp) -> Interp {
         let mut merged = a.clone();
-        let keys: Vec<u16> = merged.regs.keys().copied().chain(b.regs.keys().copied()).collect();
+        let keys: Vec<u16> = merged
+            .regs
+            .keys()
+            .copied()
+            .chain(b.regs.keys().copied())
+            .collect();
         for k in keys {
             let ea = a.regs.get(&k);
             let eb = b.regs.get(&k);
             match (ea, eb) {
-                (Some(x), Some(y)) if x.expr == y.expr && !x.used && !y.used && x.name.is_none() && y.name.is_none() => {
+                (Some(x), Some(y))
+                    if x.expr == y.expr
+                        && !x.used
+                        && !y.used
+                        && x.name.is_none()
+                        && y.name.is_none() =>
+                {
                     merged.regs.insert(k, x.clone());
                 }
                 _ => {
                     // 双侧都强制命名后取未知值，保证后续读取有定义
                     let name = format!("m{}", k);
-                    let mk = || Slot { expr: Expr::Undefined, used: true, name: Some(name.clone()), declared: false };
+                    let mk = || Slot {
+                        expr: Expr::Undefined,
+                        used: true,
+                        name: Some(name.clone()),
+                        declared: false,
+                    };
                     a.regs.insert(k, mk());
                     b.regs.insert(k, mk());
                     merged.regs.insert(k, mk());

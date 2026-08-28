@@ -24,6 +24,7 @@ import {
   Palette,
   RefreshCw,
   SlidersHorizontal,
+  Bot,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { ThemeToggle } from "../ThemeToggle"
@@ -43,11 +44,15 @@ import {
   useDisclosure,
 } from "../ui/base-ui"
 import { usePersistentState } from "../../hooks/usePersistentState"
+import { cn } from "../../lib/utils"
 import { api, type ViewKind } from "../../lib/api"
+import { PROVIDER_PRESETS, saveAiConfig, loadAiConfig, DEFAULT_AI_CONFIG, type AiConfig } from "../../lib/ai-config"
+import { createProvider } from "../../lib/ai-provider"
+import { generateText } from "ai"
 import appIcon from "../../assets/app-icon.svg"
 
 /** 设置页分区 ID。 */
-export type SettingsSectionId = "appearance" | "decompiler" | "data" | "about"
+export type SettingsSectionId = "appearance" | "decompiler" | "data" | "ai" | "about"
 
 /** 「反编译」分区下的子菜单 ID。 */
 type DecompilerSubId = "tool" | "config"
@@ -65,6 +70,7 @@ interface SettingsSection {
 const SECTIONS: SettingsSection[] = [
   { id: "appearance", label: "外观", icon: Palette, title: "外观", description: "自定义 Hark 的界面显示效果。" },
   { id: "decompiler", label: "反编译", icon: FileCode2, title: "反编译", description: "配置反编译工具与文件打开方式。" },
+  { id: "ai", label: "AI 助手", icon: Bot, title: "AI 助手", description: "配置 AI 模型提供商与 API 密钥。" },
   { id: "data", label: "数据管理", icon: Database, title: "数据管理", description: "管理应用的本地数据与缓存。" },
   { id: "about", label: "关于", icon: Info, title: "关于" },
 ]
@@ -161,6 +167,7 @@ export function SettingsPage({ activeSection, onSectionChange, onBack }: Setting
               {activeSection === "appearance" && <AppearanceSection />}
               {activeSection === "decompiler" && decompilerSub === "tool" && <DecompilerToolSection />}
               {activeSection === "decompiler" && decompilerSub === "config" && <DecompilerConfigSection />}
+              {activeSection === "ai" && <AISection />}
               {activeSection === "data" && <DataSection />}
               {activeSection === "about" && <AboutSection version={version} />}
             </div>
@@ -425,6 +432,197 @@ function DecompilerConfigSection() {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/** AI 助手分区：Provider / Base URL / API Key / Model / Temperature + 测试连接。 */
+function AISection() {
+  const [config, setConfig] = useState<AiConfig | null>(null)
+  const [loaded, setLoaded] = useState(false)
+  const [isTesting, setIsTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+
+  useEffect(() => {
+    void loadAiConfig().then(cfg => {
+      setConfig(cfg ?? { ...DEFAULT_AI_CONFIG })
+      setLoaded(true)
+    })
+  }, [])
+
+  const update = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => {
+    setConfig(prev => (prev ? { ...prev, [key]: value } : prev))
+    setTestResult(null)
+  }
+
+  const handleProviderChange = (providerId: string) => {
+    const preset = PROVIDER_PRESETS.find(p => p.id === providerId)
+    if (preset && config) {
+      setConfig({
+        ...config,
+        provider: providerId,
+        baseURL: preset.baseURL || config.baseURL,
+        model: preset.defaultModel || config.model,
+      })
+      setTestResult(null)
+    }
+  }
+
+  const handleSave = async () => {
+    if (!config) return
+    await saveAiConfig(config)
+    window.dispatchEvent(new Event("hark:ai-config-saved"))
+    addToast({ title: "AI 配置已保存", severity: "success" })
+  }
+
+  const handleTest = async () => {
+    if (!config || !config.baseURL.trim() || !config.model.trim()) {
+      setTestResult({ ok: false, message: "请先填写 Base URL 和模型名称" })
+      return
+    }
+    setIsTesting(true)
+    setTestResult(null)
+    try {
+      const provider = createProvider(config)
+      const result = await generateText({
+        model: provider.chat(config.model),
+        prompt: "请回复「连接成功」四个字。",
+      })
+      setTestResult({ ok: true, message: `连接成功：${result.text.slice(0, 50)}` })
+    } catch (e) {
+      setTestResult({ ok: false, message: String(e) })
+    } finally {
+      setIsTesting(false)
+    }
+  }
+
+  if (!loaded || !config) {
+    return (
+      <section>
+        <SectionHeader id="ai-settings-heading" title="AI 助手" description="配置 AI 模型提供商与 API 密钥。" />
+        <div className="p-5 text-sm text-default-400">正在加载配置…</div>
+      </section>
+    )
+  }
+
+  return (
+    <section aria-labelledby="ai-settings-heading">
+      <SectionHeader id="ai-settings-heading" title="AI 助手" description="配置 AI 模型提供商与 API 密钥。" />
+      <div className="divide-y divide-default-200 px-5">
+        {/* Provider 选择 */}
+        <div className="py-4">
+          <div className="flex items-start gap-3">
+            <Bot className="mt-0.5 h-4 w-4 shrink-0 text-default-400" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-foreground">模型提供商</div>
+              <p className="mt-1 text-xs leading-5 text-default-400">选择 AI 模型提供商，选择后自动填入地址与默认模型。</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {PROVIDER_PRESETS.map(preset => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => handleProviderChange(preset.id)}
+                    className={cn(
+                      "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+                      config.provider === preset.id
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-default-200 text-default-500 hover:bg-default-100",
+                    )}
+                  >
+                    {preset.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Base URL */}
+        <div className="py-4">
+          <div className="flex items-start gap-3">
+            <Code2 className="mt-0.5 h-4 w-4 shrink-0 text-default-400" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-foreground">Base URL</div>
+              <p className="mt-1 text-xs leading-5 text-default-400">API 基础地址，通常以 /v1 结尾。</p>
+              <Input
+                className="mt-2"
+                value={config.baseURL}
+                onValueChange={v => update("baseURL", v)}
+                placeholder="https://api.deepseek.com/v1"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* API Key */}
+        <div className="py-4">
+          <div className="flex items-start gap-3">
+            <SlidersHorizontal className="mt-0.5 h-4 w-4 shrink-0 text-default-400" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-foreground">API Key</div>
+              <p className="mt-1 text-xs leading-5 text-default-400">API 密钥，本地存储不上传。Ollama 本地部署可留空。</p>
+              <Input
+                className="mt-2"
+                type="password"
+                value={config.apiKey}
+                onValueChange={v => update("apiKey", v)}
+                placeholder="sk-…"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Model */}
+        <div className="py-4">
+          <div className="flex items-start gap-3">
+            <FileCode2 className="mt-0.5 h-4 w-4 shrink-0 text-default-400" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-foreground">模型名称</div>
+              <p className="mt-1 text-xs leading-5 text-default-400">如 deepseek-chat、gpt-4o、qwen-plus 等。</p>
+              <Input
+                className="mt-2"
+                value={config.model}
+                onValueChange={v => update("model", v)}
+                placeholder="deepseek-chat"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Temperature */}
+        <div className="py-4">
+          <div className="flex items-start gap-3">
+            <Palette className="mt-0.5 h-4 w-4 shrink-0 text-default-400" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-foreground">采样温度</div>
+              <p className="mt-1 text-xs leading-5 text-default-400">值越大回复越发散，值越小越确定。范围 0~2。</p>
+              <div className="mt-3 flex items-center gap-3">
+                <input
+                  type="range"
+                  min={0}
+                  max={2}
+                  step={0.1}
+                  value={config.temperature}
+                  onChange={e => update("temperature", parseFloat(e.target.value))}
+                  className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-default-200 accent-primary"
+                />
+                <span className="w-10 text-right text-sm tabular-nums text-default-500">{config.temperature.toFixed(1)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 操作按钮 */}
+        <div className="flex items-center gap-2 py-4">
+          <Button color="primary" onPress={() => void handleSave()}>保存配置</Button>
+          <Button variant="bordered" isLoading={isTesting} onPress={() => void handleTest()}>测试连接</Button>
+          {testResult && (
+            <span className={cn("text-xs", testResult.ok ? "text-success" : "text-danger")}>
+              {testResult.message}
+            </span>
+          )}
         </div>
       </div>
     </section>

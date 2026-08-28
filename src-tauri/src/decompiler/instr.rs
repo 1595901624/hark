@@ -128,7 +128,10 @@ pub fn unescape(raw: &str) -> String {
             Some('0') => out.push('\0'),
             Some('u') => {
                 // \uXXXX 或 \u{XXXX}
-                let mut hex: String = chars.by_ref().take_while(|c| c.is_ascii_hexdigit()).collect();
+                let mut hex: String = chars
+                    .by_ref()
+                    .take_while(|c| c.is_ascii_hexdigit())
+                    .collect();
                 if hex.is_empty() && chars.clone().next() == Some('{') {
                     chars.next();
                     hex = chars.by_ref().take_while(|c| *c != '}').collect();
@@ -208,7 +211,8 @@ fn parse_int(tok: &str) -> Result<i64, ()> {
 }
 
 /// 在顶层（引号外）按逗号切分操作数串。
-fn split_operands(rest: &str) -> Vec<String> {    let mut parts = vec![];
+fn split_operands(rest: &str) -> Vec<String> {
+    let mut parts = vec![];
     let mut cur = String::new();
     let mut in_str: Option<char> = None;
     let mut escaped = false;
@@ -264,7 +268,11 @@ pub fn parse_line(raw: &str) -> Line {
     if colon > 0 {
         let head = &code[..colon];
         if !head.is_empty()
-            && head.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_' || c == '$').unwrap_or(false)
+            && head
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+                .unwrap_or(false)
             && head.chars().all(is_label_char)
         {
             label = Some(head.to_string());
@@ -291,16 +299,22 @@ pub fn parse_line(raw: &str) -> Line {
         .map(|t| parse_operand(&t))
         .collect();
 
-    Line::Insn(Insn { label, opcode, operands })
+    Line::Insn(Insn {
+        label,
+        opcode,
+        operands,
+    })
 }
 
 /// 批量解析方法体行，过滤空行。
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn parse_lines(body: &[String]) -> Vec<Line> {
-    body.iter().filter_map(|l| match parse_line(l) {
-        Line::Directive(d) if d.is_empty() => None,
-        other => Some(other),
-    }).collect()
+    body.iter()
+        .filter_map(|l| match parse_line(l) {
+            Line::Directive(d) if d.is_empty() => None,
+            other => Some(other),
+        })
+        .collect()
 }
 
 // ---------- 操作码分类 ----------
@@ -498,47 +512,77 @@ pub fn decode_call(op: &str) -> Option<CallShape> {
     let base = base.strip_prefix("call")?;
     if let Some(rest) = base.strip_prefix("thisrange") {
         if rest.is_empty() {
-            return Some(CallShape { has_this: true, mode: CallMode::Range });
+            return Some(CallShape {
+                has_this: true,
+                mode: CallMode::Range,
+            });
         }
     }
     if let Some(rest) = base.strip_prefix("range") {
         if rest.is_empty() {
-            return Some(CallShape { has_this: false, mode: CallMode::Range });
+            return Some(CallShape {
+                has_this: false,
+                mode: CallMode::Range,
+            });
         }
     }
     if let Some(rest) = base.strip_prefix("this") {
         if let Ok(n) = rest.parse::<usize>() {
-            return Some(CallShape { has_this: true, mode: CallMode::Fixed(n) });
+            return Some(CallShape {
+                has_this: true,
+                mode: CallMode::Fixed(n),
+            });
         }
     }
     // callargN / callN
     if let Some(rest) = base.strip_prefix("arg") {
         if let Ok(n) = rest.parse::<usize>() {
-            return Some(CallShape { has_this: false, mode: CallMode::Fixed(n) });
+            return Some(CallShape {
+                has_this: false,
+                mode: CallMode::Fixed(n),
+            });
         }
     }
     // callargsN / callthisargsN 旧式命名
     if let Some(rest) = base.strip_prefix("args") {
         if rest.is_empty() {
-            return Some(CallShape { has_this: false, mode: CallMode::Range });
+            return Some(CallShape {
+                has_this: false,
+                mode: CallMode::Range,
+            });
         }
         if let Ok(n) = rest.parse::<usize>() {
-            return Some(CallShape { has_this: false, mode: CallMode::Fixed(n) });
+            return Some(CallShape {
+                has_this: false,
+                mode: CallMode::Fixed(n),
+            });
         }
     }
     if let Ok(n) = base.parse::<usize>() {
-        return Some(CallShape { has_this: false, mode: CallMode::Fixed(n) });
+        return Some(CallShape {
+            has_this: false,
+            mode: CallMode::Fixed(n),
+        });
     }
     // callargs / callthisargs 旧式命名按区间处理
     if base == "args" {
-        return Some(CallShape { has_this: false, mode: CallMode::Range });
+        return Some(CallShape {
+            has_this: false,
+            mode: CallMode::Range,
+        });
     }
     if base == "thisargs" {
-        return Some(CallShape { has_this: true, mode: CallMode::Range });
+        return Some(CallShape {
+            has_this: true,
+            mode: CallMode::Range,
+        });
     }
     // 展开调用：参数为单个数组
     if base == "spread" {
-        return Some(CallShape { has_this: false, mode: CallMode::Fixed(1) });
+        return Some(CallShape {
+            has_this: false,
+            mode: CallMode::Fixed(1),
+        });
     }
     None
 }
@@ -634,7 +678,11 @@ pub enum Kind {
     /// super 调用。
     SuperCall(CallShape),
     /// 创建对象实例。
-    NewObj { class: Option<String>, argc: usize, first: Option<u16> },
+    NewObj {
+        class: Option<String>,
+        argc: usize,
+        first: Option<u16>,
+    },
     /// `{}` 字面量。
     EmptyObject,
     /// `[]` 字面量。
@@ -678,12 +726,18 @@ pub fn classify(insn: &Insn) -> Kind {
 
     // mov 家族
     if base == "mov" {
-        if let (Some(d), Some(s)) = (o.first().and_then(|x| x.reg_key()), o.get(1).and_then(|x| x.reg_key())) {
+        if let (Some(d), Some(s)) = (
+            o.first().and_then(|x| x.reg_key()),
+            o.get(1).and_then(|x| x.reg_key()),
+        ) {
             return Move(d, s);
         }
     }
     if op.starts_with("movi") {
-        if let (Some(d), Some(i)) = (o.first().and_then(|x| x.reg_key()), o.get(1).and_then(|x| x.as_imm())) {
+        if let (Some(d), Some(i)) = (
+            o.first().and_then(|x| x.reg_key()),
+            o.get(1).and_then(|x| x.as_imm()),
+        ) {
             return MoveImm(d, i);
         }
     }
@@ -712,11 +766,18 @@ pub fn classify(insn: &Insn) -> Kind {
             AluForm::Acc2 => AluAcc2(alu),
             AluForm::UnaryToAcc => AluUnary(alu),
             AluForm::InPlace => {
-                if let (Some(r), Some(i)) = (o.first().and_then(|x| x.reg_key()), o.get(1).and_then(|x| x.as_imm())) {
-                    AluInPlace(match alu {
-                        AluOp::Add | AluOp::Sub => alu,
-                        other => other,
-                    }, r, i)
+                if let (Some(r), Some(i)) = (
+                    o.first().and_then(|x| x.reg_key()),
+                    o.get(1).and_then(|x| x.as_imm()),
+                ) {
+                    AluInPlace(
+                        match alu {
+                            AluOp::Add | AluOp::Sub => alu,
+                            other => other,
+                        },
+                        r,
+                        i,
+                    )
                 } else {
                     Other
                 }
@@ -736,7 +797,10 @@ pub fn classify(insn: &Insn) -> Kind {
     }
 
     // 属性访问
-    if op.starts_with("ldobjbyname") || op.starts_with("getpropbyname") || op.starts_with("ldobjbynamelazybuiltin") {
+    if op.starts_with("ldobjbyname")
+        || op.starts_with("getpropbyname")
+        || op.starts_with("ldobjbynamelazybuiltin")
+    {
         return LoadProp { super_: false };
     }
     if op.starts_with("ldsuperbyname") {
@@ -791,7 +855,8 @@ pub fn classify(insn: &Insn) -> Kind {
         return DynamicImport;
     }
     // instanceof 检查
-    if op.starts_with("isinstanceof") || op.starts_with("checkisinstanceof") || base == "instanceof" {
+    if op.starts_with("isinstanceof") || op.starts_with("checkisinstanceof") || base == "instanceof"
+    {
         return InstanceOf;
     }
     // 方法定义：操作数含方法引用字符串
@@ -851,7 +916,10 @@ pub fn classify(insn: &Insn) -> Kind {
         }
         return Other;
     }
-    if op.starts_with("trystglobalbyname") || op.starts_with("stglobalvar") || op.starts_with("stglobal") {
+    if op.starts_with("trystglobalbyname")
+        || op.starts_with("stglobalvar")
+        || op.starts_with("stglobal")
+    {
         if let Some(name) = o.iter().find_map(|x| x.as_str()) {
             return StoreGlobal(name.to_string());
         }
@@ -873,7 +941,9 @@ pub fn classify(insn: &Insn) -> Kind {
         }
         return Other;
     }
-    if op.starts_with("ldmodulevar") || op.starts_with("ldexternalmodulevar") || op.starts_with("tryldmodulevar")
+    if op.starts_with("ldmodulevar")
+        || op.starts_with("ldexternalmodulevar")
+        || op.starts_with("tryldmodulevar")
         || op.starts_with("ldlocalmodulevar")
     {
         if let Some(id) = o.first().and_then(|x| x.as_imm()) {
@@ -903,7 +973,11 @@ pub fn classify(insn: &Insn) -> Kind {
     // 调用
     let is_super = op.starts_with("supercall");
     if let Some(shape) = decode_call(op) {
-        return if is_super { SuperCall(shape) } else { Call(shape) };
+        return if is_super {
+            SuperCall(shape)
+        } else {
+            Call(shape)
+        };
     }
 
     // 对象 / 类构造
@@ -916,7 +990,11 @@ pub fn classify(insn: &Insn) -> Kind {
     if op.starts_with("newobj") {
         let class = class_name_of(o.first());
         let argc = o.get(1).and_then(|x| x.as_imm()).unwrap_or(0).max(0) as usize;
-        return NewObj { class, argc, first: None };
+        return NewObj {
+            class,
+            argc,
+            first: None,
+        };
     }
     if op.starts_with("createemptyobject") {
         return EmptyObject;
@@ -1103,16 +1181,43 @@ mod tests {
     #[test]
     fn decodes_jumps_and_alu_shapes() {
         assert!(matches!(decode_jump("jmp"), Some(Jump::Always)));
-        assert!(matches!(decode_jump("jeqz"), Some(Jump::Cond(Cmp::Eq, true))));
-        assert!(matches!(decode_jump("jnez"), Some(Jump::Cond(Cmp::Ne, true))));
-        assert!(matches!(decode_jump("jeq"), Some(Jump::Cond(Cmp::Eq, false))));
+        assert!(matches!(
+            decode_jump("jeqz"),
+            Some(Jump::Cond(Cmp::Eq, true))
+        ));
+        assert!(matches!(
+            decode_jump("jnez"),
+            Some(Jump::Cond(Cmp::Ne, true))
+        ));
+        assert!(matches!(
+            decode_jump("jeq"),
+            Some(Jump::Cond(Cmp::Eq, false))
+        ));
 
-        assert!(matches!(decode_alu("add2"), Some((AluOp::Add, AluForm::Acc2))));
-        assert!(matches!(decode_alu("sub2.64"), Some((AluOp::Sub, AluForm::Acc2))));
-        assert!(matches!(decode_alu("addi"), Some((AluOp::Add, AluForm::InPlace))));
-        assert!(matches!(decode_alu("inc"), Some((AluOp::Add, AluForm::InPlace))));
-        assert!(matches!(decode_alu("dec"), Some((AluOp::Sub, AluForm::InPlace))));
-        assert!(matches!(decode_alu("neg"), Some((AluOp::Neg, AluForm::UnaryToAcc))));
+        assert!(matches!(
+            decode_alu("add2"),
+            Some((AluOp::Add, AluForm::Acc2))
+        ));
+        assert!(matches!(
+            decode_alu("sub2.64"),
+            Some((AluOp::Sub, AluForm::Acc2))
+        ));
+        assert!(matches!(
+            decode_alu("addi"),
+            Some((AluOp::Add, AluForm::InPlace))
+        ));
+        assert!(matches!(
+            decode_alu("inc"),
+            Some((AluOp::Add, AluForm::InPlace))
+        ));
+        assert!(matches!(
+            decode_alu("dec"),
+            Some((AluOp::Sub, AluForm::InPlace))
+        ));
+        assert!(matches!(
+            decode_alu("neg"),
+            Some((AluOp::Neg, AluForm::UnaryToAcc))
+        ));
         assert!(decode_alu("lda.str").is_none());
     }
 
@@ -1148,7 +1253,10 @@ mod tests {
             k => panic!("{k:?}"),
         }
         let l = mk("\treturnundefined");
-        assert!(matches!(classify(insn_of(&l)), Kind::Ret(RetKind::Undefined)));
+        assert!(matches!(
+            classify(insn_of(&l)),
+            Kind::Ret(RetKind::Undefined)
+        ));
         let l = mk("\tunknownop123 v1");
         assert!(matches!(classify(insn_of(&l)), Kind::Other));
     }
@@ -1175,74 +1283,190 @@ mod tests {
     /// 已还原（非 Other）的指令清单。
     const HANDLED: &[&str] = &[
         // 寄存器与累加器
-        "mov", "mov.64", "movi", "movi.64", "lda", "sta", "sta.64",
-        "ldai", "fldai", "lda.str", "ldanull", "ldundefined",
-        "ldtrue", "ldfalse", "ldnan", "ldinfinity",
+        "mov",
+        "mov.64",
+        "movi",
+        "movi.64",
+        "lda",
+        "sta",
+        "sta.64",
+        "ldai",
+        "fldai",
+        "lda.str",
+        "ldanull",
+        "ldundefined",
+        "ldtrue",
+        "ldfalse",
+        "ldnan",
+        "ldinfinity",
         // 算术 / 位运算
-        "add2", "sub2", "mul2", "div2", "mod2", "and2", "or2", "xor2",
-        "shl2", "shr2", "ashr2", "addi", "subi", "muli", "divi", "modi",
-        "inc", "dec", "neg", "not", "strconcat",
+        "add2",
+        "sub2",
+        "mul2",
+        "div2",
+        "mod2",
+        "and2",
+        "or2",
+        "xor2",
+        "shl2",
+        "shr2",
+        "ashr2",
+        "addi",
+        "subi",
+        "muli",
+        "divi",
+        "modi",
+        "inc",
+        "dec",
+        "neg",
+        "not",
+        "strconcat",
         // 比较
-        "eq", "ne", "not_eq", "lt", "gt", "le", "ge",
-        "strict_eq", "strict_not_eq",
+        "eq",
+        "ne",
+        "not_eq",
+        "lt",
+        "gt",
+        "le",
+        "ge",
+        "strict_eq",
+        "strict_not_eq",
         // 跳转
-        "jmp", "jmpaddr", "jeqz", "jnez", "jmpeqz", "jeq", "jne",
-        "jlt", "jgt", "jle", "jge", "jsteq", "jstnoteq",
+        "jmp",
+        "jmpaddr",
+        "jeqz",
+        "jnez",
+        "jmpeqz",
+        "jeq",
+        "jne",
+        "jlt",
+        "jgt",
+        "jle",
+        "jge",
+        "jsteq",
+        "jstnoteq",
         // 属性访问
-        "ldobjbyname", "ldobjbynamelazybuiltin", "stobjbyname",
-        "stownbyname", "stobjbynamelazybuiltin", "stownbynamelazybuiltin",
-        "definefieldbyname", "getpropbyname", "ldsuperbyname",
-        "stsuperbyname", "ldobjbyvalue", "stobjbyvalue",
-        "stownbyvalue", "ldobjbyindex", "stobjbyindex", "stownbyindex",
+        "ldobjbyname",
+        "ldobjbynamelazybuiltin",
+        "stobjbyname",
+        "stownbyname",
+        "stobjbynamelazybuiltin",
+        "stownbynamelazybuiltin",
+        "definefieldbyname",
+        "getpropbyname",
+        "ldsuperbyname",
+        "stsuperbyname",
+        "ldobjbyvalue",
+        "stobjbyvalue",
+        "stownbyvalue",
+        "ldobjbyindex",
+        "stobjbyindex",
+        "stownbyindex",
         // 私有属性 / 属性定义 / 数据复制
-        "ldprivateproperty", "stprivateproperty", "definepropertybyname",
+        "ldprivateproperty",
+        "stprivateproperty",
+        "definepropertybyname",
         "copydataproperties",
         // 全局 / 模块
-        "ldglobalvar", "stglobalvar", "tryldglobalbyname",
-        "trystglobalbyname", "tryldglobalvalue",
-        "ldmodulevar", "stmodulevar", "ldexternalmodulevar",
-        "ldlocalmodulevar", "tryldmodulevar",
-        "getmodulenamespace", "tryldmodulenamespace", "stmodulenamespace",
+        "ldglobalvar",
+        "stglobalvar",
+        "tryldglobalbyname",
+        "trystglobalbyname",
+        "tryldglobalvalue",
+        "ldmodulevar",
+        "stmodulevar",
+        "ldexternalmodulevar",
+        "ldlocalmodulevar",
+        "tryldmodulevar",
+        "getmodulenamespace",
+        "tryldmodulenamespace",
+        "stmodulenamespace",
         // 调用与导入
-        "callarg0", "callarg1", "callarg2", "callarg3",
-        "callthis0", "callthis1", "callthis2", "callthis3",
-        "callrange", "callthisrange",
-        "supercallarg0", "supercallrange", "supercallthisrange",
+        "callarg0",
+        "callarg1",
+        "callarg2",
+        "callarg3",
+        "callthis0",
+        "callthis1",
+        "callthis2",
+        "callthis3",
+        "callrange",
+        "callthisrange",
+        "supercallarg0",
+        "supercallrange",
+        "supercallthisrange",
         "dynamicimport",
         // 类型检查
-        "isinstanceofimm", "checkisinstanceofbyid",
+        "isinstanceofimm",
+        "checkisinstanceofbyid",
         // 对象 / 类
-        "newobj", "newobjrange", "createemptyobject", "createemptyarray",
-        "createarraywithbuffer", "createobjectwithbuffer",
-        "defineclassbyname", "defineclasswithbuffer",
+        "newobj",
+        "newobjrange",
+        "createemptyobject",
+        "createemptyarray",
+        "createarraywithbuffer",
+        "createobjectwithbuffer",
+        "defineclassbyname",
+        "defineclasswithbuffer",
         // 词法环境
-        "newlexenv", "newlexenvwithscope", "poplexenv", "stlexvar", "ldlexvar",
+        "newlexenv",
+        "newlexenvwithscope",
+        "poplexenv",
+        "stlexvar",
+        "ldlexvar",
         // 控制流终止 / 异常
-        "throw", "return", "return.64", "returnundefined", "returnobject",
-        "throwconstpatternnotmatch", "throwundefinedifhole",
-        "throw.undefinedifholewithname", "throw.ifsupernotcorrectcall",
+        "throw",
+        "return",
+        "return.64",
+        "returnundefined",
+        "returnobject",
+        "throwconstpatternnotmatch",
+        "throwundefinedifhole",
+        "throw.undefinedifholewithname",
+        "throw.ifsupernotcorrectcall",
         // 布尔化 / 数值化 / 类型
-        "isfalse", "istrue", "tonumeric", "typeof",
-        "less", "greater", "greatereq", "noteq",
-        "stricteq", "strictnoteq",
+        "isfalse",
+        "istrue",
+        "tonumeric",
+        "typeof",
+        "less",
+        "greater",
+        "greatereq",
+        "noteq",
+        "stricteq",
+        "strictnoteq",
         // 方法定义与展开调用
-        "definefunc", "definemethod", "copyrestargs",
-        "callargs2", "supercallspread", "instanceof",
+        "definefunc",
+        "definemethod",
+        "copyrestargs",
+        "callargs2",
+        "supercallspread",
+        "instanceof",
         // 异步
-        "asyncfunctionenter", "asyncfunctionexit", "suspendgenerator",
-        "resumegenerator", "awaitresult", "awaitshort", "awaitcompletion",
+        "asyncfunctionenter",
+        "asyncfunctionexit",
+        "suspendgenerator",
+        "resumegenerator",
+        "awaitresult",
+        "awaitshort",
+        "awaitcompletion",
         // 异步状态机
-        "ldhole", "getresumemode", "asyncfunctionawaituncaught",
-        "asyncfunctionresolve", "asyncfunctionreject",
+        "ldhole",
+        "getresumemode",
+        "asyncfunctionawaituncaught",
+        "asyncfunctionresolve",
+        "asyncfunctionreject",
         // 其他
-        "nop", "debugger", "setrequiredmemory", "waitforfinish",
-        "wide.mov", "wide.ldobjbyindex",
+        "nop",
+        "debugger",
+        "setrequiredmemory",
+        "waitforfinish",
+        "wide.mov",
+        "wide.ldobjbyindex",
     ];
 
     /// 近似还原的指令：有语义表达但细节（池中数值 / 精确操作数序）不可静态确定。
-    const APPROXIMATED: &[&str] = &[
-        "definegettersetterbyvalue", "spreadarr", "ldbigint",
-    ];
+    const APPROXIMATED: &[&str] = &["definegettersetterbyvalue", "spreadarr", "ldbigint"];
 
     /// 尚未还原、落入原始汇编兜底的指令清单。
     /// 当前为空；新增无法分类的指令时应补充到这里并跟进实现。
@@ -1260,7 +1484,10 @@ mod tests {
                 "v0, 0x1".to_string()
             } else if root == "sta" {
                 "v1".to_string()
-            } else if matches!(root, "addi" | "subi" | "muli" | "divi" | "modi" | "inc" | "dec") {
+            } else if matches!(
+                root,
+                "addi" | "subi" | "muli" | "divi" | "modi" | "inc" | "dec"
+            ) {
                 // 就地复合赋值：寄存器在前、立即数在后
                 "v1, 0x2".to_string()
             } else if root.starts_with('j') {

@@ -57,12 +57,10 @@ pub fn locate(configured: Option<&str>, bundled: Option<&Path>) -> Result<PathBu
             return Ok(c);
         }
     }
-    Err(
-        "未找到 ark_disasm。请将官方二进制放入应用资源目录 \
+    Err("未找到 ark_disasm。请将官方二进制放入应用资源目录 \
          （resources/bin/<windows|macos|linux>/），\
          或在设置中配置 ark_disasm 路径。"
-            .into(),
-    )
+        .into())
 }
 
 /// 按当前平台返回候选可执行文件名（Windows 优先 `.exe`）。
@@ -112,7 +110,10 @@ pub fn run_version(tool: &Path) -> Result<String, String> {
 ///
 /// 先以 `--dump-literal-pools` 运行（旧版工具不认识该参数时会失败），
 /// 失败时回退到普通调用并返回空名称表。
-pub fn disassemble_with_names(tool: &Path, abc_path: &Path) -> Result<(String, LiteralNames), String> {
+pub fn disassemble_with_names(
+    tool: &Path,
+    abc_path: &Path,
+) -> Result<(String, LiteralNames), String> {
     match run_once(tool, &["--dump-literal-pools"], abc_path) {
         Ok(text) => {
             let names = parse_literal_names(&text);
