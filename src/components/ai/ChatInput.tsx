@@ -1,16 +1,19 @@
 /**
  * 聊天输入框：多行文本 + Ctrl+Enter 发送 + Shift+Enter 换行。
+ * 流式生成时发送按钮变为停止按钮。
  */
 import { useRef, useState } from "react"
-import { Send } from "lucide-react"
+import { Send, Square } from "lucide-react"
 import { cn } from "../../lib/utils"
 
 interface ChatInputProps {
   onSend: (text: string) => void
   disabled?: boolean
+  isStreaming?: boolean
+  onStop?: () => void
 }
 
-export function ChatInput({ onSend, disabled }: ChatInputProps) {
+export function ChatInput({ onSend, disabled, isStreaming, onStop }: ChatInputProps) {
   const [value, setValue] = useState("")
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -55,19 +58,33 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
             "scrollbar-thin",
           )}
         />
-        <button
-          type="button"
-          onClick={handleSend}
-          disabled={disabled || !value.trim()}
-          className={cn(
-            "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors",
-            disabled || !value.trim()
-              ? "bg-default-100 text-default-300"
-              : "bg-primary text-primary-foreground hover:bg-primary/90",
-          )}
-        >
-          <Send className="h-3.5 w-3.5" />
-        </button>
+        {isStreaming ? (
+          <button
+            type="button"
+            onClick={onStop}
+            className={cn(
+              "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors",
+              "bg-danger text-danger-foreground hover:bg-danger/90",
+            )}
+            title="停止生成"
+          >
+            <Square className="h-3 w-3 fill-current" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={disabled || !value.trim()}
+            className={cn(
+              "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors",
+              disabled || !value.trim()
+                ? "bg-default-100 text-default-300"
+                : "bg-primary text-primary-foreground hover:bg-primary/90",
+            )}
+          >
+            <Send className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
     </div>
   )

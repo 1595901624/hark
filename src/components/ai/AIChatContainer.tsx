@@ -33,7 +33,21 @@ function AIChatContainerInner({ onClose, onOpenSettings, context }: AIChatContai
       error={ai.error}
       configReady={ai.configReady}
       configLoaded={ai.configLoaded}
-      config={ai.config}
+
+      profiles={ai.profiles}
+      activeProfile={ai.activeProfile}
+      onSwitchProfile={ai.switchProfile}
+
+      conversations={ai.conversations}
+      activeConversationId={ai.activeConversationId}
+      showConversationList={ai.showConversationList}
+      onShowConversationList={ai.setShowConversationList}
+      onNewConversation={ai.startNewConversation}
+      onSelectConversation={ai.switchConversation}
+      onDeleteConversation={ai.removeConversation}
+      onRenameConversation={ai.renameConversation}
+
+      onStop={ai.stop}
     />
   )
 }

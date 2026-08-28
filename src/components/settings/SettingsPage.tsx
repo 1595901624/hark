@@ -25,6 +25,10 @@ import {
   RefreshCw,
   SlidersHorizontal,
   Bot,
+  Plus,
+  Trash2,
+  Pencil,
+  X,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { ThemeToggle } from "../ThemeToggle"
@@ -46,7 +50,12 @@ import {
 import { usePersistentState } from "../../hooks/usePersistentState"
 import { cn } from "../../lib/utils"
 import { api, type ViewKind } from "../../lib/api"
-import { PROVIDER_PRESETS, saveAiConfig, loadAiConfig, DEFAULT_AI_CONFIG, type AiConfig } from "../../lib/ai-config"
+import {
+  PROVIDER_PRESETS, findPreset, createDefaultProfileData,
+  loadProfiles, createProfile, updateProfile, deleteProfile,
+  saveActiveProfileId, loadActiveProfileId,
+  type AiProfile,
+} from "../../lib/ai-profiles"
 import { createProvider } from "../../lib/ai-provider"
 import { generateText } from "ai"
 import appIcon from "../../assets/app-icon.svg"
@@ -438,56 +447,126 @@ function DecompilerConfigSection() {
   )
 }
 
-/** AI 助手分区：Provider / Base URL / API Key / Model / Temperature + 测试连接。 */
+/** AI 助手分区：多 Profile 管理（类似 Cline 配置）。 */
 function AISection() {
-  const [config, setConfig] = useState<AiConfig | null>(null)
+  const [profiles, setProfiles] = useState<AiProfile[]>([])
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [isCreating, setIsCreating] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
 
+  // 编辑中的临时表单数据
+  const [editForm, setEditForm] = useState<Omit<AiProfile, "id">>(() => createDefaultProfileData())
+
   useEffect(() => {
-    void loadAiConfig().then(cfg => {
-      setConfig(cfg ?? { ...DEFAULT_AI_CONFIG })
+    void (async () => {
+      const list = await loadProfiles()
+      setProfiles(list)
+      const activeId = await loadActiveProfileId()
+      setActiveProfileId(activeId ?? list[0]?.id ?? null)
       setLoaded(true)
-    })
+    })()
   }, [])
 
-  const update = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => {
-    setConfig(prev => (prev ? { ...prev, [key]: value } : prev))
+  // 监听配置保存事件（其他地方保存后刷新）
+  useEffect(() => {
+    const reload = () => void (async () => {
+      const list = await loadProfiles()
+      setProfiles(list)
+      const activeId = await loadActiveProfileId()
+      setActiveProfileId(activeId ?? list[0]?.id ?? null)
+    })()
+    window.addEventListener("hark:ai-config-saved", reload)
+    return () => window.removeEventListener("hark:ai-config-saved", reload)
+  }, [])
+
+  const update = <K extends keyof Omit<AiProfile, "id">>(key: K, value: Omit<AiProfile, "id">[K]) => {
+    setEditForm(prev => ({ ...prev, [key]: value }))
     setTestResult(null)
   }
 
   const handleProviderChange = (providerId: string) => {
-    const preset = PROVIDER_PRESETS.find(p => p.id === providerId)
-    if (preset && config) {
-      setConfig({
-        ...config,
-        provider: providerId,
-        baseURL: preset.baseURL || config.baseURL,
-        model: preset.defaultModel || config.model,
-      })
-      setTestResult(null)
-    }
+    const preset = findPreset(providerId)
+    setEditForm(prev => ({
+      ...prev,
+      provider: providerId,
+      baseURL: preset?.baseURL || prev.baseURL,
+      model: preset?.defaultModel || prev.model,
+    }))
+    setTestResult(null)
+  }
+
+  const handleStartEdit = (profile: AiProfile) => {
+    const { id, ...rest } = profile
+    setEditForm(rest)
+    setEditingId(id)
+    setIsCreating(false)
+    setTestResult(null)
+  }
+
+  const handleStartCreate = () => {
+    setEditForm(createDefaultProfileData())
+    setIsCreating(true)
+    setEditingId(null)
+    setTestResult(null)
+  }
+
+  const handleCancelEdit = () => {
+    setEditingId(null)
+    setIsCreating(false)
+    setTestResult(null)
   }
 
   const handleSave = async () => {
-    if (!config) return
-    await saveAiConfig(config)
+    if (isCreating) {
+      const created = await createProfile(editForm)
+      setProfiles(prev => [...prev, created])
+      if (!activeProfileId) {
+        await saveActiveProfileId(created.id)
+        setActiveProfileId(created.id)
+      }
+    } else if (editingId) {
+      await updateProfile(editingId, editForm)
+      setProfiles(prev => prev.map(p => p.id === editingId ? { ...p, ...editForm } : p))
+    }
+    setEditingId(null)
+    setIsCreating(false)
     window.dispatchEvent(new Event("hark:ai-config-saved"))
-    addToast({ title: "AI 配置已保存", severity: "success" })
+    addToast({ title: isCreating ? "配置已创建" : "配置已保存", severity: "success" })
+  }
+
+  const handleDelete = async (id: string) => {
+    await deleteProfile(id)
+    setProfiles(prev => prev.filter(p => p.id !== id))
+    if (activeProfileId === id) {
+      const remaining = profiles.filter(p => p.id !== id)
+      const newActiveId = remaining[0]?.id ?? null
+      setActiveProfileId(newActiveId)
+      if (newActiveId) await saveActiveProfileId(newActiveId)
+    }
+    window.dispatchEvent(new Event("hark:ai-config-saved"))
+    addToast({ title: "配置已删除", severity: "success" })
+  }
+
+  const handleSetActive = async (id: string) => {
+    await saveActiveProfileId(id)
+    setActiveProfileId(id)
+    window.dispatchEvent(new Event("hark:ai-config-saved"))
   }
 
   const handleTest = async () => {
-    if (!config || !config.baseURL.trim() || !config.model.trim()) {
+    if (!editForm.baseURL.trim() || !editForm.model.trim()) {
       setTestResult({ ok: false, message: "请先填写 Base URL 和模型名称" })
       return
     }
     setIsTesting(true)
     setTestResult(null)
     try {
-      const provider = createProvider(config)
+      const provider = createProvider({ baseURL: editForm.baseURL, apiKey: editForm.apiKey })
       const result = await generateText({
-        model: provider.chat(config.model),
+        model: provider.chat(editForm.model),
         prompt: "请回复「连接成功」四个字。",
       })
       setTestResult({ ok: true, message: `连接成功：${result.text.slice(0, 50)}` })
@@ -498,7 +577,7 @@ function AISection() {
     }
   }
 
-  if (!loaded || !config) {
+  if (!loaded) {
     return (
       <section>
         <SectionHeader id="ai-settings-heading" title="AI 助手" description="配置 AI 模型提供商与 API 密钥。" />
@@ -507,26 +586,125 @@ function AISection() {
     )
   }
 
+  const showEditForm = isCreating || editingId !== null
+
   return (
     <section aria-labelledby="ai-settings-heading">
-      <SectionHeader id="ai-settings-heading" title="AI 助手" description="配置 AI 模型提供商与 API 密钥。" />
+      <SectionHeader id="ai-settings-heading" title="AI 助手" description="管理 AI 模型配置档案，支持多供应商切换。" />
       <div className="divide-y divide-default-200 px-5">
-        {/* Provider 选择 */}
+        {/* Profile 列表 */}
         <div className="py-4">
-          <div className="flex items-start gap-3">
-            <Bot className="mt-0.5 h-4 w-4 shrink-0 text-default-400" />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-foreground">模型提供商</div>
-              <p className="mt-1 text-xs leading-5 text-default-400">选择 AI 模型提供商，选择后自动填入地址与默认模型。</p>
-              <div className="mt-3 flex flex-wrap gap-2">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-medium text-foreground">配置档案</div>
+            <Button
+              size="sm"
+              variant="flat"
+              onPress={handleStartCreate}
+              className="h-7 min-w-7 gap-1 px-2 text-xs"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              新建配置
+            </Button>
+          </div>
+
+          {profiles.length === 0 && !showEditForm ? (
+            <p className="mt-3 text-xs text-default-400">
+              尚未创建任何配置。点击「新建配置」开始设置 AI 模型提供商。
+            </p>
+          ) : (
+            <div className="mt-3 space-y-1.5">
+              {profiles.map(profile => (
+                <div
+                  key={profile.id}
+                  className={cn(
+                    "flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors",
+                    activeProfileId === profile.id
+                      ? "border-primary/40 bg-primary/5"
+                      : "border-default-200 hover:bg-default-100",
+                  )}
+                >
+                  <button
+                    type="button"
+                    onClick={() => void handleSetActive(profile.id)}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  >
+                    <div
+                      className={cn(
+                        "h-2 w-2 shrink-0 rounded-full",
+                        activeProfileId === profile.id ? "bg-primary" : "bg-default-300",
+                      )}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-medium text-foreground">{profile.name}</div>
+                      <div className="truncate text-[10px] text-default-400">
+                        {findPreset(profile.provider)?.name ?? profile.provider} · {profile.model}
+                      </div>
+                    </div>
+                  </button>
+                  <div className="flex shrink-0 items-center gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => handleStartEdit(profile)}
+                      className="rounded p-1 text-default-400 hover:bg-default-100 hover:text-foreground"
+                      title="编辑"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDelete(profile.id)}
+                      className="rounded p-1 text-default-400 hover:bg-danger/10 hover:text-danger"
+                      title="删除"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* 编辑/新建表单 */}
+        {showEditForm && (
+          <div className="py-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="text-sm font-medium text-foreground">
+                {isCreating ? "新建配置" : "编辑配置"}
+              </div>
+              <button
+                type="button"
+                onClick={handleCancelEdit}
+                className="rounded p-1 text-default-400 hover:bg-default-100 hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            {/* 配置名称 */}
+            <div className="mb-4">
+              <label className="text-xs font-medium text-default-500">配置名称</label>
+              <Input
+                className="mt-1.5"
+                value={editForm.name}
+                onValueChange={v => update("name", v)}
+                placeholder="如：DeepSeek 日常"
+              />
+            </div>
+
+            {/* Provider 选择 */}
+            <div className="mb-4">
+              <label className="text-xs font-medium text-default-500">模型提供商</label>
+              <p className="mt-1 text-[11px] text-default-400">选择后自动填入地址与默认模型。</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
                 {PROVIDER_PRESETS.map(preset => (
                   <button
                     key={preset.id}
                     type="button"
                     onClick={() => handleProviderChange(preset.id)}
                     className={cn(
-                      "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
-                      config.provider === preset.id
+                      "rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors",
+                      editForm.provider === preset.id
                         ? "border-primary bg-primary/10 text-primary"
                         : "border-default-200 text-default-500 hover:bg-default-100",
                     )}
@@ -536,94 +714,72 @@ function AISection() {
                 ))}
               </div>
             </div>
-          </div>
-        </div>
 
-        {/* Base URL */}
-        <div className="py-4">
-          <div className="flex items-start gap-3">
-            <Code2 className="mt-0.5 h-4 w-4 shrink-0 text-default-400" />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-foreground">Base URL</div>
-              <p className="mt-1 text-xs leading-5 text-default-400">API 基础地址，通常以 /v1 结尾。</p>
+            {/* Base URL */}
+            <div className="mb-4">
+              <label className="text-xs font-medium text-default-500">Base URL</label>
               <Input
-                className="mt-2"
-                value={config.baseURL}
+                className="mt-1.5"
+                value={editForm.baseURL}
                 onValueChange={v => update("baseURL", v)}
                 placeholder="https://api.deepseek.com/v1"
               />
             </div>
-          </div>
-        </div>
 
-        {/* API Key */}
-        <div className="py-4">
-          <div className="flex items-start gap-3">
-            <SlidersHorizontal className="mt-0.5 h-4 w-4 shrink-0 text-default-400" />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-foreground">API Key</div>
-              <p className="mt-1 text-xs leading-5 text-default-400">API 密钥，本地存储不上传。Ollama 本地部署可留空。</p>
+            {/* API Key */}
+            <div className="mb-4">
+              <label className="text-xs font-medium text-default-500">API Key</label>
+              <p className="mt-1 text-[11px] text-default-400">本地存储不上传。Ollama 本地部署可留空。</p>
               <Input
-                className="mt-2"
+                className="mt-1.5"
                 type="password"
-                value={config.apiKey}
+                value={editForm.apiKey}
                 onValueChange={v => update("apiKey", v)}
                 placeholder="sk-…"
               />
             </div>
-          </div>
-        </div>
 
-        {/* Model */}
-        <div className="py-4">
-          <div className="flex items-start gap-3">
-            <FileCode2 className="mt-0.5 h-4 w-4 shrink-0 text-default-400" />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-foreground">模型名称</div>
-              <p className="mt-1 text-xs leading-5 text-default-400">如 deepseek-chat、gpt-4o、qwen-plus 等。</p>
+            {/* Model */}
+            <div className="mb-4">
+              <label className="text-xs font-medium text-default-500">模型名称</label>
               <Input
-                className="mt-2"
-                value={config.model}
+                className="mt-1.5"
+                value={editForm.model}
                 onValueChange={v => update("model", v)}
                 placeholder="deepseek-chat"
               />
             </div>
-          </div>
-        </div>
 
-        {/* Temperature */}
-        <div className="py-4">
-          <div className="flex items-start gap-3">
-            <Palette className="mt-0.5 h-4 w-4 shrink-0 text-default-400" />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-foreground">采样温度</div>
-              <p className="mt-1 text-xs leading-5 text-default-400">值越大回复越发散，值越小越确定。范围 0~2。</p>
-              <div className="mt-3 flex items-center gap-3">
+            {/* Temperature */}
+            <div className="mb-4">
+              <label className="text-xs font-medium text-default-500">采样温度</label>
+              <p className="mt-1 text-[11px] text-default-400">值越大回复越发散，值越小越确定。范围 0~2。</p>
+              <div className="mt-2 flex items-center gap-3">
                 <input
                   type="range"
                   min={0}
                   max={2}
                   step={0.1}
-                  value={config.temperature}
+                  value={editForm.temperature}
                   onChange={e => update("temperature", parseFloat(e.target.value))}
                   className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-default-200 accent-primary"
                 />
-                <span className="w-10 text-right text-sm tabular-nums text-default-500">{config.temperature.toFixed(1)}</span>
+                <span className="w-10 text-right text-sm tabular-nums text-default-500">{editForm.temperature.toFixed(1)}</span>
               </div>
             </div>
-          </div>
-        </div>
 
-        {/* 操作按钮 */}
-        <div className="flex items-center gap-2 py-4">
-          <Button color="primary" onPress={() => void handleSave()}>保存配置</Button>
-          <Button variant="bordered" isLoading={isTesting} onPress={() => void handleTest()}>测试连接</Button>
-          {testResult && (
-            <span className={cn("text-xs", testResult.ok ? "text-success" : "text-danger")}>
-              {testResult.message}
-            </span>
-          )}
-        </div>
+            {/* 操作按钮 */}
+            <div className="flex items-center gap-2">
+              <Button color="primary" onPress={() => void handleSave()}>保存</Button>
+              <Button variant="bordered" isLoading={isTesting} onPress={() => void handleTest()}>测试连接</Button>
+              {testResult && (
+                <span className={cn("text-xs", testResult.ok ? "text-success" : "text-danger")}>
+                  {testResult.message}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </section>
   )

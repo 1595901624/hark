@@ -147,6 +147,8 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
   const [tree, setTree] = useState<TreeNode | null>(null)
   /** 当前项目名（打开文件的文件名） */
   const [projectName, setProjectName] = useState<string | null>(null)
+  /** 当前项目文件绝对路径（用作 AI 会话历史关联键） */
+  const [projectPath, setProjectPath] = useState<string | null>(null)
   /** 全局忙碌提示（如「正在反编译 …」）；`null` 表示空闲 */
   const [busyMessage, setBusyMessage] = useState<string | null>(null)
   /** 已打开的标签列表 */
@@ -276,6 +278,7 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
       const t = result.tree
       setTree(t)
       setProjectName(t.name)
+      setProjectPath(path)
       // 新项目的节点 ID 会重新分配，旧的搜索行定位请求必须作废
       setScrollTarget(null)
       setShowFindBar(false)
@@ -474,6 +477,7 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
     const onCloseProject = () => {
       setTree(null)
       setProjectName(null)
+      setProjectPath(null)
       setTabs([])
       setActiveKey(undefined)
       setHarkPath(null)
@@ -747,12 +751,13 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
     () => activeTab && activeContent
       ? {
           projectName: projectName ?? "",
+          projectPath: projectPath ?? "",
           activeNodeName: activeTab.tab.title,
           activeView: activeTab.view,
           codeContent: activeContent.body ?? "",
         }
       : null,
-    [activeTab, activeContent, projectName],
+    [activeTab, activeContent, projectName, projectPath],
   )
 
   // ---------- 侧栏拖宽 ----------
