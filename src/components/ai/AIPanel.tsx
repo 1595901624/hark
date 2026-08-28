@@ -199,7 +199,7 @@ export function AIPanel({
           ) : (
             <>
               {/* 消息列表 */}
-              <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto scrollbar-thin">
+              <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin">
                 {messages.length === 0 ? (
                   <div className="flex flex-col items-center justify-center gap-2 p-8 text-center">
                     <Bot className="h-8 w-8 text-default-300" />
