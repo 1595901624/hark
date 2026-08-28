@@ -31,7 +31,7 @@ function ChatMessageInner({ message }: ChatMessageProps) {
 
   return (
     <div className="min-w-0 px-3 py-3">
-      <div className="prose prose-sm dark:prose-invert max-w-none break-words text-[13px] leading-relaxed [&_pre]:overflow-hidden [&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_pre]:rounded-lg [&_pre]:bg-default-200/60 [&_pre]:p-3 [&_pre]:text-[12px] dark:[&_pre]:bg-black/30 [&_code]:rounded [&_code]:bg-default-200/60 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[12px] [&_code]:break-all dark:[&_code]:bg-white/10 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:break-all [&_table]:w-full [&_table]:table-fixed [&_table]:border-collapse [&_th]:border [&_th]:border-default-200 [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium [&_td]:border [&_td]:border-default-200 [&_td]:px-2 [&_td]:py-1 [&_td]:break-words [&_img]:max-w-full">
+      <div className="ai-markdown break-words">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{text || "…"}</ReactMarkdown>
       </div>
     </div>
