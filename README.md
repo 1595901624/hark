@@ -171,3 +171,5 @@ Hark/
 ## 📄 许可证
 
 [MIT](LICENSE)
+
+[![Powered by OrcaRouter](https://img.shields.io/badge/Powered_by-OrcaRouter-2563eb)](https://www.orcarouter.ai/ref/ref_48d2d80da602e059af48)
