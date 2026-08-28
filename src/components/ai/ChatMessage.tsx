@@ -3,6 +3,7 @@
  */
 import { memo } from "react"
 import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 import { cn } from "../../lib/utils"
 import type { UIMessage } from "ai"
 
@@ -38,8 +39,8 @@ function ChatMessageInner({ message }: ChatMessageProps) {
           {isUser ? (
             <p className="whitespace-pre-wrap break-words">{text}</p>
           ) : (
-            <div className="prose prose-sm dark:prose-invert max-w-none break-words [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-default-200/60 [&_pre]:p-3 [&_pre]:text-[12px] dark:[&_pre]:bg-black/30 [&_code]:rounded [&_code]:bg-default-200/60 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[12px] dark:[&_code]:bg-white/10 [&_pre_code]:bg-transparent [&_pre_code]:p-0">
-              <ReactMarkdown>{text || "…"}</ReactMarkdown>
+            <div className="prose prose-sm dark:prose-invert max-w-none break-words [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-default-200/60 [&_pre]:p-3 [&_pre]:text-[12px] dark:[&_pre]:bg-black/30 [&_code]:rounded [&_code]:bg-default-200/60 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[12px] dark:[&_code]:bg-white/10 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:border-default-200 [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium [&_td]:border [&_td]:border-default-200 [&_td]:px-2 [&_td]:py-1">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{text || "…"}</ReactMarkdown>
             </div>
           )}
         </div>
