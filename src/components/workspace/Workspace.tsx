@@ -45,6 +45,7 @@ import { ViewSwitcher } from "./ViewSwitcher"
 import { SearchPanel } from "./SearchPanel"
 import { EditorFindBar } from "./EditorFindBar"
 import { AIPanel } from "../ai/AIPanel"
+import { useAIChat } from "../../hooks/useAIChat"
 
 /** 原生打开对话框的文件类型过滤器。 */
 const FILE_FILTERS = [
@@ -197,6 +198,8 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
   const [aiPanelWidth, setAiPanelWidth] = usePersistentState<number>("ai-panel-width", 380)
   /** AI 面板拖宽状态 */
   const [isAIResizing, setIsAIResizing] = useState(false)
+  /** AI 对话状态（提升到 Workspace 层，面板收起时保持挂载不丢失历史） */
+  const ai = useAIChat()
 
   /** 全部展开项目树。 */
   const expandAll = () =>
@@ -1052,16 +1055,16 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
           )}
         </main>
 
-        {/* AI 面板 */}
-        {isAIPanelOpen && (
-          <div
-            className={cn(
-              "relative flex shrink-0 flex-col",
-              !isAIResizing && "transition-[width] duration-200",
-            )}
-            style={{ width: aiPanelWidth }}
-          >
-            {/* 拖宽分隔条 */}
+        {/* AI 面板：始终挂载，收起时 width:0 + overflow-hidden（与左侧侧栏动画一致） */}
+        <aside
+          className={cn(
+            "relative flex shrink-0 flex-col overflow-hidden border-l border-default-200/80",
+            !isAIResizing && "transition-[width] duration-200",
+          )}
+          style={{ width: isAIPanelOpen ? aiPanelWidth : 0 }}
+        >
+          {/* 拖宽分隔条 */}
+          {isAIPanelOpen && (
             <div
               role="separator"
               aria-label="调整 AI 面板宽度"
@@ -1071,14 +1074,23 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
               onPointerUp={endAIResize}
               onPointerCancel={endAIResize}
             />
+          )}
+          <div className="min-h-0 flex-1 overflow-hidden" style={{ width: aiPanelWidth }}>
             <AIPanel
-              isOpen={isAIPanelOpen}
               onClose={() => window.dispatchEvent(new Event("hark:toggle-ai-panel"))}
               onOpenSettings={onOpenAISettings}
               context={aiContext}
+              messages={ai.messages}
+              sendMessage={ai.sendMessage}
+              status={ai.status}
+              error={ai.error}
+              configReady={ai.configReady}
+              configLoaded={ai.configLoaded}
+              config={ai.config}
+              setContext={ai.setContext}
             />
           </div>
-        )}
+        </aside>
       </div>
       {/* 打开过程中又选择新文件时的确认对话框 */}
       <Modal

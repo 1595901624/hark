@@ -103,6 +103,7 @@ export default function TitleBar({ onNavigate, onToggleSidebar, onToggleAIPanel,
       />
 
       {platform === "macos" ? (
+        <>
         <div data-tauri-drag-region className="absolute left-0 top-0 z-50 flex h-[var(--macos-titlebar-height)] w-[124px] select-none items-center pl-[76px] text-[#5f5f5f] dark:text-default-400">
           {hostPlatform !== "macos" && (
             <MacPreviewWindowControls
@@ -114,23 +115,22 @@ export default function TitleBar({ onNavigate, onToggleSidebar, onToggleAIPanel,
           <TitleButton label="侧栏" onClick={onToggleSidebar}>
             <PanelLeft className="h-[15px] w-[15px] -translate-y-px" />
           </TitleButton>
-            {onToggleAIPanel && (
-              <TitleButton label="AI 面板" onClick={onToggleAIPanel}>
-                <PanelRight className={cn("h-[15px] w-[15px] -translate-y-px", isAIPanelOpen && "text-primary")} />
-              </TitleButton>
-            )}
         </div>
+        {/* macOS 右上角 AI 面板按钮 */}
+        {onToggleAIPanel && (
+          <div className="absolute right-2 top-0 z-50 flex h-[var(--macos-titlebar-height)] select-none items-center text-[#5f5f5f] dark:text-default-400">
+            <TitleButton label="AI 面板" onClick={onToggleAIPanel}>
+              <PanelRight className={cn("h-[15px] w-[15px] -translate-y-px", isAIPanelOpen && "text-primary")} />
+            </TitleButton>
+          </div>
+        )}
+        </>
       ) : (
         <div data-tauri-drag-region className="flex h-[var(--titlebar-height)] shrink-0 select-none items-center bg-chrome text-[#5f5f5f] dark:text-default-400">
           <div className="flex h-full items-center gap-0.5 px-2">
             <TitleButton label="侧栏" onClick={onToggleSidebar}>
               <PanelLeft className="h-[17px] w-[17px]" />
             </TitleButton>
-            {onToggleAIPanel && (
-              <TitleButton label="AI 面板" onClick={onToggleAIPanel}>
-                <PanelRight className={cn("h-[17px] w-[17px]", isAIPanelOpen && "text-primary")} />
-              </TitleButton>
-            )}
           </div>
 
           <div className="flex h-full items-center gap-0.5 text-[13px]" data-tauri-drag-region>
@@ -188,6 +188,14 @@ export default function TitleBar({ onNavigate, onToggleSidebar, onToggleAIPanel,
           </div>
 
           <div className="flex-1" data-tauri-drag-region />
+
+          <div className="flex h-full items-center gap-0.5 pr-1">
+            {onToggleAIPanel && (
+              <TitleButton label="AI 面板" onClick={onToggleAIPanel}>
+                <PanelRight className={cn("h-[17px] w-[17px]", isAIPanelOpen && "text-primary")} />
+              </TitleButton>
+            )}
+          </div>
 
           <div className={platform === "linux" ? "flex h-full items-center gap-1 pr-2" : "flex h-full items-stretch"}>
             <WindowButton platform={platform} label="最小化" onClick={() => appWindow?.minimize()}><Minus className="h-4 w-4" /></WindowButton>
