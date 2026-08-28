@@ -19,7 +19,7 @@
  *   （`.pa`）批量导出到所选目录；
  * - 持久化侧栏宽度与侧栏视图选择；打开项目时同步设置页配置的 `ark_disasm` 路径。
  */
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog"
 import { getCurrentWebview } from "@tauri-apps/api/webview"
 import { Download, FileCode2, FolderOpen, FolderTree, LoaderCircle, Search } from "lucide-react"
@@ -44,8 +44,7 @@ import { CodeView } from "./CodeView"
 import { ViewSwitcher } from "./ViewSwitcher"
 import { SearchPanel } from "./SearchPanel"
 import { EditorFindBar } from "./EditorFindBar"
-import { AIPanel } from "../ai/AIPanel"
-import { useAIChat } from "../../hooks/useAIChat"
+import { AIChatContainer } from "../ai/AIChatContainer"
 
 /** 原生打开对话框的文件类型过滤器。 */
 const FILE_FILTERS = [
@@ -198,8 +197,6 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
   const [aiPanelWidth, setAiPanelWidth] = usePersistentState<number>("ai-panel-width", 380)
   /** AI 面板拖宽状态 */
   const [isAIResizing, setIsAIResizing] = useState(false)
-  /** AI 对话状态（提升到 Workspace 层，面板收起时保持挂载不丢失历史） */
-  const ai = useAIChat()
 
   /** 全部展开项目树。 */
   const expandAll = () =>
@@ -745,15 +742,18 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
   const activeLoading = activeTab?.loading[activeTab.view]
   const activeError = activeTab?.errors[activeTab.view]
 
-  /** AI 对话上下文：当前激活标签的代码信息。 */
-  const aiContext = activeTab && activeContent
-    ? {
-        projectName: projectName ?? "",
-        activeNodeName: activeTab.tab.title,
-        activeView: activeTab.view,
-        codeContent: activeContent.body ?? "",
-      }
-    : null
+  /** AI 对话上下文：当前激活标签的代码信息（memoized 避免渲染循环）。 */
+  const aiContext = useMemo(
+    () => activeTab && activeContent
+      ? {
+          projectName: projectName ?? "",
+          activeNodeName: activeTab.tab.title,
+          activeView: activeTab.view,
+          codeContent: activeContent.body ?? "",
+        }
+      : null,
+    [activeTab, activeContent, projectName],
+  )
 
   // ---------- 侧栏拖宽 ----------
 
@@ -1076,18 +1076,11 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
             />
           )}
           <div className="min-h-0 flex-1 overflow-hidden" style={{ width: aiPanelWidth }}>
-            <AIPanel
+            <AIChatContainer
+              isPanelOpen={isAIPanelOpen}
               onClose={() => window.dispatchEvent(new Event("hark:toggle-ai-panel"))}
               onOpenSettings={onOpenAISettings}
               context={aiContext}
-              messages={ai.messages}
-              sendMessage={ai.sendMessage}
-              status={ai.status}
-              error={ai.error}
-              configReady={ai.configReady}
-              configLoaded={ai.configLoaded}
-              config={ai.config}
-              setContext={ai.setContext}
             />
           </div>
         </aside>

@@ -27,7 +27,6 @@ interface AIPanelProps {
   configReady: boolean
   configLoaded: boolean
   config: import("../../lib/ai-config").AiConfig | null
-  setContext: (ctx: ChatContext | null) => void
 }
 
 export function AIPanel({
@@ -41,13 +40,7 @@ export function AIPanel({
   configReady,
   configLoaded,
   config,
-  setContext,
 }: AIPanelProps) {
-  // 同步外部上下文到 hook
-  useEffect(() => {
-    setContext(context)
-  }, [context]) // eslint-disable-line react-hooks/exhaustive-deps
-
   const scrollRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (scrollRef.current) {

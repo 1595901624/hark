@@ -1,6 +1,7 @@
 /**
  * 单条聊天消息渲染：用户消息纯文本，AI 消息 Markdown 渲染（含代码块高亮）。
  */
+import { memo } from "react"
 import ReactMarkdown from "react-markdown"
 import { cn } from "../../lib/utils"
 import type { UIMessage } from "ai"
@@ -9,7 +10,7 @@ interface ChatMessageProps {
   message: UIMessage
 }
 
-export function ChatMessage({ message }: ChatMessageProps) {
+function ChatMessageInner({ message }: ChatMessageProps) {
   const isUser = message.role === "user"
   const text = message.parts
     .map(part => {
@@ -46,3 +47,5 @@ export function ChatMessage({ message }: ChatMessageProps) {
     </div>
   )
 }
+
+export const ChatMessage = memo(ChatMessageInner)

@@ -40,10 +40,9 @@ function buildSystemPrompt(context: ChatContext): string {
   return parts.join("\n\n")
 }
 
-export function useAIChat() {
+export function useAIChat(context: ChatContext | null) {
   const [config, setConfig] = useState<AiConfig | null>(null)
   const [configLoaded, setConfigLoaded] = useState(false)
-  const [context, setContext] = useState<ChatContext | null>(null)
 
   useEffect(() => {
     void loadAiConfig().then(cfg => {
@@ -59,6 +58,7 @@ export function useAIChat() {
     return () => window.removeEventListener("hark:ai-config-saved", reload)
   }, [])
 
+  // 上下文变化时更新系统提示词
   useEffect(() => {
     setSystemPrompt(context ? buildSystemPrompt(context) : undefined)
   }, [context])
@@ -75,11 +75,5 @@ export function useAIChat() {
     config,
     configLoaded,
     configReady: config !== null && isConfigReady(config),
-    context,
-    setContext,
-    reloadConfig: async () => {
-      const cfg = await loadAiConfig()
-      setConfig(cfg)
-    },
   }
 }
