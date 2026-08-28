@@ -739,6 +739,18 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
     })
   }
 
+  /** 关闭除指定标签外的所有标签。 */
+  const closeOtherTabs = (key: string) => {
+    setTabs(prev => prev.filter(entry => entry.tab.key === key))
+    setActiveKey(key)
+  }
+
+  /** 关闭所有标签。 */
+  const closeAllTabs = () => {
+    setTabs([])
+    setActiveKey(undefined)
+  }
+
   /** 当前激活的标签状态。 */
   const activeTab = tabs.find(entry => entry.tab.key === activeKey)
   /** 激活标签当前视图的内容状态 */
@@ -932,6 +944,8 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
               activeKey={activeKey}
               onSelect={setActiveKey}
               onClose={closeTab}
+              onCloseOthers={closeOtherTabs}
+              onCloseAll={closeAllTabs}
             />
           ) : (
             <div className="flex h-[38px] shrink-0 items-center border-b border-default-200/80 bg-chrome px-4 text-[12.5px] text-default-400">

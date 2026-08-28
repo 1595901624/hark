@@ -159,10 +159,13 @@ export function SettingsPage({ activeSection, onSectionChange, onBack }: Setting
                         <Button
                           key={subId}
                           size="sm"
-                          color={decompilerSub === subId ? "primary" : "default"}
-                          variant={decompilerSub === subId ? "flat" : "light"}
+                          color={activeSection === "decompiler" && decompilerSub === subId ? "primary" : "default"}
+                          variant={activeSection === "decompiler" && decompilerSub === subId ? "flat" : "light"}
                           className="h-8 shrink-0 justify-start px-3 text-[12px] md:w-full"
-                          onPress={() => setDecompilerSub(subId)}
+                          onPress={() => {
+                            setDecompilerSub(subId)
+                            onSectionChange("decompiler")
+                          }}
                           startContent={<SubIcon className="h-3.5 w-3.5" />}
                         >
                           {subLabel}

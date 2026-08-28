@@ -151,8 +151,6 @@ export default function TitleBar({ onNavigate, onToggleSidebar, onToggleAIPanel,
               <DropdownSeparator />
               {desktopMenuItem("close-project", "关闭项目", undefined, () => window.dispatchEvent(new Event("hark:close-project")))}
               <DropdownSeparator />
-              {desktopMenuItem("disassembler", "反编译器设置…", undefined, () => window.dispatchEvent(new Event("hark:configure-tool")))}
-              {desktopMenuItem("ai-settings", "AI 助手设置…", undefined, () => window.dispatchEvent(new Event("hark:configure-ai")))}
               {desktopMenuItem("settings", "设置", undefined, () => onNavigate?.("settings"))}
               <DropdownSeparator />
               {desktopMenuItem("quit", `退出 ${aboutInfo.name}`, "Ctrl+Q", () => void appWindow?.close())}
