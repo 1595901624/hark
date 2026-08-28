@@ -36,7 +36,7 @@ interface AIPanelProps {
   // Profile
   profiles: AiProfile[]
   activeProfile: AiProfile | null
-  onSwitchProfile: (id: string) => void
+  onSwitchProfile: (profileId: string, model: string) => void
 
   // 会话管理
   conversations: ConversationMeta[]
@@ -105,7 +105,7 @@ export function AIPanel({
             <ProfileSelector
               profiles={profiles}
               activeProfile={activeProfile}
-              onSelect={onSwitchProfile}
+              onSelectModel={onSwitchProfile}
             />
           )}
           {showConversationList && (

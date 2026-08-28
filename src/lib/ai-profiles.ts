@@ -5,6 +5,7 @@
  * 在对话窗口中快速切换。配置通过 Tauri Store 持久化。
  */
 import { getStoredItem, setStoredItem } from "./store"
+import { fetch as tauriFetch } from "@tauri-apps/plugin-http"
 
 /** AI 配置档案。 */
 export interface AiProfile {
@@ -18,8 +19,10 @@ export interface AiProfile {
   baseURL: string
   /** API 密钥。 */
   apiKey: string
-  /** 模型名称。 */
+  /** 当前使用的模型名称。 */
   model: string
+  /** 该 Profile 下可用的模型列表。 */
+  models: string[]
   /** 采样温度，0~2。 */
   temperature: number
 }
@@ -93,13 +96,15 @@ async function migrateLegacyConfig(): Promise<{ profiles: AiProfile[]; migrated:
     if (!parsed.baseURL || !parsed.model) return { profiles: [], migrated: false }
 
     const preset = findPreset(parsed.provider ?? "custom")
+    const model = parsed.model ?? ""
     const profile: AiProfile = {
       id: genId(),
       name: preset ? `${preset.name}` : "默认配置",
       provider: parsed.provider ?? "custom",
       baseURL: parsed.baseURL,
       apiKey: parsed.apiKey ?? "",
-      model: parsed.model,
+      model,
+      models: model ? [model] : [],
       temperature: parsed.temperature ?? 0.7,
     }
     return { profiles: [profile], migrated: true }
@@ -114,7 +119,13 @@ export async function loadProfiles(): Promise<AiProfile[]> {
     const raw = await getStoredItem(AI_PROFILES_KEY)
     if (raw) {
       const parsed = JSON.parse(raw) as AiProfile[]
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        // 兼容旧版无 models 字段的 Profile
+        return parsed.map(p => ({
+          ...p,
+          models: p.models ?? (p.model ? [p.model] : []),
+        }))
+      }
     }
 
     // 尝试迁移旧配置
@@ -198,12 +209,34 @@ export async function loadActiveProfile(): Promise<AiProfile | null> {
 /** 默认 Profile 数据（供 Settings UI 新建时使用）。 */
 export function createDefaultProfileData(providerId: string = "deepseek"): Omit<AiProfile, "id"> {
   const preset = findPreset(providerId)
+  const model = preset?.defaultModel ?? ""
   return {
     name: preset?.name ?? "自定义",
     provider: providerId,
     baseURL: preset?.baseURL ?? "",
     apiKey: "",
-    model: preset?.defaultModel ?? "",
+    model,
+    models: model ? [model] : [],
     temperature: 0.7,
   }
+}
+
+/** 获取可用模型：调用 /v1/models 端点获取当前 API 下的模型列表。 */
+export async function fetchAvailableModels(baseURL: string, apiKey: string): Promise<string[]> {
+  const url = baseURL.replace(/\/+$/, "") + "/models"
+  const res = await tauriFetch(url, {
+    method: "GET",
+    headers: {
+      "Authorization": `Bearer ${apiKey || "ollama"}`,
+      "Content-Type": "application/json",
+    },
+  })
+  if (!res.ok) {
+    throw new Error(`获取模型列表失败：HTTP ${res.status}`)
+  }
+  const data = await res.json() as { data?: Array<{ id: string }> }
+  if (!data.data || !Array.isArray(data.data)) {
+    throw new Error("模型列表响应格式异常")
+  }
+  return data.data.map(m => m.id).sort()
 }

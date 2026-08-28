@@ -36,7 +36,7 @@ function AIChatContainerInner({ onClose, onOpenSettings, context }: AIChatContai
 
       profiles={ai.profiles}
       activeProfile={ai.activeProfile}
-      onSwitchProfile={ai.switchProfile}
+      onSwitchProfile={ai.switchModel}
 
       conversations={ai.conversations}
       activeConversationId={ai.activeConversationId}

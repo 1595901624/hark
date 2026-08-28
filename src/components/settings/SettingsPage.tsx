@@ -29,6 +29,8 @@ import {
   Trash2,
   Pencil,
   X,
+  DownloadCloud,
+  Check,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { ThemeToggle } from "../ThemeToggle"
@@ -53,7 +55,7 @@ import { api, type ViewKind } from "../../lib/api"
 import {
   PROVIDER_PRESETS, findPreset, createDefaultProfileData,
   loadProfiles, createProfile, updateProfile, deleteProfile,
-  saveActiveProfileId, loadActiveProfileId,
+  saveActiveProfileId, loadActiveProfileId, fetchAvailableModels,
   type AiProfile,
 } from "../../lib/ai-profiles"
 import { createProvider } from "../../lib/ai-provider"
@@ -459,6 +461,9 @@ function AISection() {
 
   // 编辑中的临时表单数据
   const [editForm, setEditForm] = useState<Omit<AiProfile, "id">>(() => createDefaultProfileData())
+  // 模型管理
+  const [isFetchingModels, setIsFetchingModels] = useState(false)
+  const [newModelName, setNewModelName] = useState("")
 
   useEffect(() => {
     void (async () => {
@@ -489,11 +494,13 @@ function AISection() {
 
   const handleProviderChange = (providerId: string) => {
     const preset = findPreset(providerId)
+    const defaultModel = preset?.defaultModel ?? ""
     setEditForm(prev => ({
       ...prev,
       provider: providerId,
       baseURL: preset?.baseURL || prev.baseURL,
-      model: preset?.defaultModel || prev.model,
+      model: defaultModel || prev.model,
+      models: defaultModel ? [defaultModel] : prev.models,
     }))
     setTestResult(null)
   }
@@ -575,6 +582,58 @@ function AISection() {
     } finally {
       setIsTesting(false)
     }
+  }
+
+  const handleFetchModels = async () => {
+    if (!editForm.baseURL.trim()) {
+      addToast({ title: "请先填写 Base URL", severity: "warning" })
+      return
+    }
+    setIsFetchingModels(true)
+    try {
+      const models = await fetchAvailableModels(editForm.baseURL, editForm.apiKey)
+      if (models.length === 0) {
+        addToast({ title: "未获取到模型", severity: "warning" })
+      } else {
+        setEditForm(prev => ({
+          ...prev,
+          models,
+          model: models.includes(prev.model) ? prev.model : models[0],
+        }))
+        addToast({ title: `已获取 ${models.length} 个模型`, severity: "success" })
+      }
+    } catch (e) {
+      addToast({ title: "获取模型列表失败", description: String(e), severity: "danger" })
+    } finally {
+      setIsFetchingModels(false)
+    }
+  }
+
+  const handleAddModel = () => {
+    const trimmed = newModelName.trim()
+    if (!trimmed) return
+    if (editForm.models.includes(trimmed)) {
+      setNewModelName("")
+      return
+    }
+    setEditForm(prev => ({
+      ...prev,
+      models: [...prev.models, trimmed],
+      model: prev.model || trimmed,
+    }))
+    setNewModelName("")
+  }
+
+  const handleRemoveModel = (modelName: string) => {
+    setEditForm(prev => {
+      const models = prev.models.filter(m => m !== modelName)
+      const model = prev.model === modelName ? (models[0] ?? "") : prev.model
+      return { ...prev, models, model }
+    })
+  }
+
+  const handleSetActiveModel = (model: string) => {
+    setEditForm(prev => ({ ...prev, model }))
   }
 
   if (!loaded) {
@@ -739,15 +798,82 @@ function AISection() {
               />
             </div>
 
-            {/* Model */}
+            {/* Model 列表 */}
             <div className="mb-4">
-              <label className="text-xs font-medium text-default-500">模型名称</label>
-              <Input
-                className="mt-1.5"
-                value={editForm.model}
-                onValueChange={v => update("model", v)}
-                placeholder="deepseek-chat"
-              />
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-default-500">模型列表</label>
+                <button
+                  type="button"
+                  onClick={() => void handleFetchModels()}
+                  disabled={isFetchingModels || !editForm.baseURL.trim()}
+                  className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <DownloadCloud className={cn("h-3 w-3", isFetchingModels && "animate-pulse")} />
+                  {isFetchingModels ? "获取中…" : "自动获取"}
+                </button>
+              </div>
+              <p className="mt-1 text-[11px] text-default-400">点击「自动获取」从 API 拉取可用模型，或手动添加。带 ✓ 的为当前使用模型。</p>
+
+              {/* 已添加的模型列表 */}
+              {editForm.models.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {editForm.models.map(model => (
+                    <div
+                      key={model}
+                      className={cn(
+                        "group flex items-center gap-1 rounded-lg border px-2 py-1 text-xs transition-colors",
+                        editForm.model === model
+                          ? "border-primary/40 bg-primary/10 text-primary"
+                          : "border-default-200 text-default-500 hover:bg-default-100",
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleSetActiveModel(model)}
+                        className="flex items-center gap-1"
+                        title={editForm.model === model ? "当前使用" : "设为当前模型"}
+                      >
+                        {editForm.model === model && <Check className="h-3 w-3" />}
+                        <span>{model}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveModel(model)}
+                        className="ml-0.5 rounded p-0.5 text-default-300 opacity-0 transition-opacity hover:text-danger group-hover:opacity-100"
+                        title="移除模型"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* 手动添加模型 */}
+              <div className="mt-2 flex gap-1.5">
+                <Input
+                  className="flex-1"
+                  value={newModelName}
+                  onValueChange={setNewModelName}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") {
+                      e.preventDefault()
+                      handleAddModel()
+                    }
+                  }}
+                  placeholder="输入模型名称，如 deepseek-chat"
+                />
+                <Button
+                  size="sm"
+                  variant="flat"
+                  onPress={handleAddModel}
+                  disabled={!newModelName.trim()}
+                  className="h-8 shrink-0"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  添加
+                </Button>
+              </div>
             </div>
 
             {/* Temperature */}

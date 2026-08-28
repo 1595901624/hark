@@ -13,7 +13,7 @@ import { useChat } from "@ai-sdk/react"
 import { createChatTransport, type TransportConfig } from "../lib/ai-transport"
 import {
   loadProfiles, loadActiveProfile, saveActiveProfileId,
-  isProfileReady, type AiProfile,
+  isProfileReady, updateProfile, type AiProfile,
 } from "../lib/ai-profiles"
 import {
   loadConversationIndex, loadConversation, saveConversation,
@@ -229,6 +229,36 @@ export function useAIChat(context: ChatContext | null) {
     await saveActiveProfileId(profileId)
   }, [profiles])
 
+  // ---- 切换模型（可跨 Profile） ----
+  const switchModel = useCallback(async (profileId: string, model: string) => {
+    const profile = profiles.find(p => p.id === profileId)
+    if (!profile) return
+
+    // 更新激活 Profile（如果跨 Profile）
+    if (profile.id !== activeProfile?.id) {
+      setActiveProfile(profile)
+      await saveActiveProfileId(profileId)
+    }
+
+    // 更新当前模型
+    const updated = { ...profile, model }
+    setActiveProfile(updated)
+
+    // 持久化：若模型不在列表中则添加
+    if (!profile.models.includes(model)) {
+      const newModels = [...profile.models, model]
+      await updateProfile(profileId, { model, models: newModels })
+      setProfiles(prev => prev.map(p =>
+        p.id === profileId ? { ...p, model, models: newModels } : p
+      ))
+    } else {
+      await updateProfile(profileId, { model })
+      setProfiles(prev => prev.map(p =>
+        p.id === profileId ? { ...p, model } : p
+      ))
+    }
+  }, [profiles, activeProfile])
+
   // ---- 终止流式 ----
   const stop = useCallback(() => {
     chat.stop()
@@ -248,6 +278,7 @@ export function useAIChat(context: ChatContext | null) {
     configLoaded,
     configReady,
     switchProfile,
+    switchModel,
 
     // 会话管理
     conversations,
