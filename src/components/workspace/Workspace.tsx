@@ -760,13 +760,13 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
 
   /** AI 对话上下文：当前激活标签的代码信息（memoized 避免渲染循环）。 */
   const aiContext = useMemo(
-    () => activeTab && activeContent
+    () => projectPath
       ? {
           projectName: projectName ?? "",
-          projectPath: projectPath ?? "",
-          activeNodeName: activeTab.tab.title,
-          activeView: activeTab.view,
-          codeContent: activeContent.body ?? "",
+          projectPath,
+          activeNodeName: activeTab?.tab.title ?? "",
+          activeView: activeTab?.view ?? "abc" as ViewKind,
+          codeContent: activeContent?.body ?? "",
         }
       : null,
     [activeTab, activeContent, projectName, projectPath],

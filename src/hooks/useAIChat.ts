@@ -10,6 +10,7 @@
  */
 import { useMemo, useRef, useCallback, useEffect, useState } from "react"
 import { useChat } from "@ai-sdk/react"
+import { getCurrentWindow } from "@tauri-apps/api/window"
 import { createChatTransport, type TransportConfig } from "../lib/ai-transport"
 import {
   loadProfiles, loadActiveProfile, saveActiveProfileId,
@@ -99,13 +100,7 @@ export function useAIChat(context: ChatContext | null) {
     setConversations(list)
   }, [])
 
-  useEffect(() => {
-    if (context?.projectPath) {
-      void reloadConversations(context.projectPath)
-    } else {
-      setConversations([])
-    }
-  }, [context?.projectPath, reloadConversations])
+
 
   // ---- Transport 构建（依赖 activeProfile） ----
   const configReady = activeProfile !== null && isProfileReady(activeProfile)
@@ -122,6 +117,21 @@ export function useAIChat(context: ChatContext | null) {
   }, [activeProfile])
 
   const chat = useChat({ transport })
+  const setMessagesRef = useRef(chat.setMessages)
+  setMessagesRef.current = chat.setMessages
+
+  // ---- 项目变化时重载会话列表并清空当前对话 ----
+  useEffect(() => {
+    if (context?.projectPath) {
+      void reloadConversations(context.projectPath)
+    } else {
+      setConversations([])
+    }
+    // 切换项目时清空当前活跃对话，避免旧项目消息残留
+    setMessagesRef.current([])
+    setActiveConversationId(null)
+    setShowConversationList(false)
+  }, [context?.projectPath, reloadConversations])
 
   // ---- 会话持久化 ----
   const activeConversationIdRef = useRef<string | null>(null)
@@ -183,6 +193,23 @@ export function useAIChat(context: ChatContext | null) {
     }
   }, [chat.status, persistCurrentConversation])
 
+  // ---- 关闭窗口/软件时保存当前对话 ----
+  const persistRef = useRef(persistCurrentConversation)
+  persistRef.current = persistCurrentConversation
+  useEffect(() => {
+    const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
+    if (!isTauri) return
+    const win = getCurrentWindow()
+    const unlisten = win.onCloseRequested(async (event) => {
+      event.preventDefault()
+      try {
+        await persistRef.current()
+      } catch { /* ignore */ }
+      win.destroy()
+    })
+    return () => { void unlisten.then(fn => fn()) }
+  }, [])
+
   // ---- 新建对话 ----
   const startNewConversation = useCallback(() => {
     // 先保存当前对话
@@ -194,12 +221,14 @@ export function useAIChat(context: ChatContext | null) {
 
   // ---- 切换对话 ----
   const switchConversation = useCallback(async (id: string) => {
+    // 先保存当前对话
+    void persistCurrentConversation()
     const conv = await loadConversation(id)
     if (!conv) return
     chat.setMessages(conv.messages as UIMessage[])
     setActiveConversationId(id)
     setShowConversationList(false)
-  }, [chat])
+  }, [chat, persistCurrentConversation])
 
   // ---- 删除对话 ----
   const removeConversation = useCallback(async (id: string) => {
