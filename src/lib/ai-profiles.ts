@@ -52,6 +52,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   { id: "mistral", name: "Mistral AI", baseURL: "https://api.mistral.ai/v1", defaultModel: "mistral-large-latest", needsApiKey: true },
   { id: "groq", name: "Groq", baseURL: "https://api.groq.com/openai/v1", defaultModel: "llama-3.3-70b-versatile", needsApiKey: true },
   { id: "together", name: "Together AI", baseURL: "https://api.together.xyz/v1", defaultModel: "meta-llama/Llama-3.3-70B-Instruct-Turbo", needsApiKey: true },
+  { id: "orca", name: "Orca Router", baseURL: "https://api.orcarouter.ai/v1", defaultModel: "gpt-4o", needsApiKey: true },
   { id: "ollama", name: "Ollama (本地)", baseURL: "http://localhost:11434/v1", defaultModel: "llama3.1", needsApiKey: false },
   { id: "custom", name: "自定义", baseURL: "", defaultModel: "", needsApiKey: true },
 ]
