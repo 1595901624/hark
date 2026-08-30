@@ -1004,7 +1004,7 @@ function AboutSection({ version }: { version: string }) {
             variant="bordered"
             startContent={<Code2 className="h-4 w-4" />}
             endContent={<ExternalLink className="h-3.5 w-3.5 text-default-400" />}
-            onPress={() => void openUrl("https://github.com/1595901624/hi-abc")}
+            onPress={() => void openUrl("https://github.com/1595901624/hark")}
           >
             GitHub
           </Button>
