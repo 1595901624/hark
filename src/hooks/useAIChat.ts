@@ -205,7 +205,7 @@ export function useAIChat(context: ChatContext | null) {
       try {
         await persistRef.current()
       } catch { /* ignore */ }
-      win.destroy()
+      await win.destroy()
     })
     return () => { void unlisten.then(fn => fn()) }
   }, [])
