@@ -215,7 +215,7 @@ pub fn render_method_body(sig: &Sig, body: &[String], names: &Names) -> String {
 }
 
 /// 还原整个 record（类）为 ArkTS 源码。
-pub fn record_to_arkts(rec: &PaRecord, names: &Names) -> String {
+pub fn record_to_arkts(rec: &PaRecord, siblings: &[PaRecord], names: &Names) -> String {
     let mut out = String::new();
     if rec.is_external {
         out.push_str(&format!(
@@ -236,6 +236,16 @@ pub fn record_to_arkts(rec: &PaRecord, names: &Names) -> String {
         return render_global_record(rec, names);
     }
 
+    // import 声明：扫描方法体引用，按同单元 record 解析目标。
+    let imports = collect_imports(rec, siblings, names);
+    if !imports.is_empty() {
+        out.push('\n');
+        for line in imports {
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+
     out.push('\n');
     out.push_str(&format!(
         "{}class {} {{\n",
@@ -243,13 +253,21 @@ pub fn record_to_arkts(rec: &PaRecord, names: &Names) -> String {
         safe_ident(&rec.display_name)
     ));
 
+    // 字段：合并 .field 声明与方法体反推结果，按字段名去重
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for field in &rec.fields {
         let (modifiers, name, ty) = parse_field(field);
         if !name.is_empty() {
+            seen.insert(name.clone());
             out.push_str(&format!("    {modifiers}{name}: {ty}\n"));
         }
     }
-    if !rec.fields.is_empty() {
+    for (decl, ty) in collect_fields_from_methods(rec) {
+        if seen.insert(decl.clone()) {
+            out.push_str(&format!("    {decl}: {ty}\n"));
+        }
+    }
+    if !rec.fields.is_empty() || !seen.is_empty() {
         out.push('\n');
     }
 
@@ -308,6 +326,122 @@ fn render_global_record(rec: &PaRecord, names: &Names) -> String {
         out.push_str(&format!("export {kw}function {} {{\n", function_head(&s)));
         out.push_str(&render_method_body(&s, &m.body, names));
         out.push_str("}\n\n");
+    }
+    out
+}
+
+/// 扫描方法体，收集可推导为 import 的引用名。
+///
+/// 候选来源：模块变量读写（字面量池索引）、类定义、`newobj` 类名、
+/// `instanceof` 等。能匹配到同单元其他 record 展示名末段时生成
+/// `import { Name } from '<display_name>';`，否则生成注释式占位。
+fn collect_imports(rec: &PaRecord, siblings: &[PaRecord], names: &Names) -> Vec<String> {
+    use instr::{classify, parse_line, Kind, Line};
+
+    // 同单元其他 record 的展示名末段 -> 完整展示名，用于解析 import 来源
+    let mut sibling_map: HashMap<String, String> = HashMap::new();
+    for s in siblings {
+        if s.display_name == rec.display_name || s.display_name == "<global>" {
+            continue;
+        }
+        // 取展示名最后一段作为短名（如 foo.Helper -> Helper），再清洗为合法标识符
+        let last = s.display_name.rsplit('.').next().unwrap_or(&s.display_name);
+        let short = safe_ident(last);
+        if short.is_empty() {
+            continue;
+        }
+        sibling_map.entry(short).or_insert(s.display_name.clone());
+    }
+
+    // 候选名 -> 来源标记；已匹配同单元的与未解析的分开
+    let mut resolved: Vec<(String, String)> = Vec::new();
+    let mut unresolved: Vec<String> = Vec::new();
+    let mut pushed: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    let push = |name: &str, resolved_list: &mut Vec<(String, String)>, unresolved_list: &mut Vec<String>, pushed: &mut std::collections::HashSet<String>| {
+        let key = name.to_string();
+        if !pushed.insert(key.clone()) {
+            return;
+        }
+        if let Some(full) = sibling_map.get(name) {
+            resolved_list.push((name.to_string(), full.clone()));
+        } else {
+            unresolved_list.push(name.to_string());
+        }
+    };
+
+    for m in &rec.methods {
+        for raw in &m.body {
+            let line = parse_line(raw);
+            let insn = match line {
+                Line::Insn(i) => i,
+                _ => continue,
+            };
+            match classify(&insn) {
+                Kind::LoadModule(id) | Kind::StoreModule(id) => {
+                    if let Some(n) = names.get(id) {
+                        push(n, &mut resolved, &mut unresolved, &mut pushed);
+                    }
+                }
+                Kind::LoadGlobal(n) | Kind::StoreGlobal(n) => {
+                    push(&n, &mut resolved, &mut unresolved, &mut pushed);
+                }
+                Kind::NewObj { class: Some(c), .. } => {
+                    if !c.is_empty() {
+                        push(&c, &mut resolved, &mut unresolved, &mut pushed);
+                    }
+                }
+                Kind::DefineClass(n) => {
+                    if !n.is_empty() {
+                        push(&n, &mut resolved, &mut unresolved, &mut pushed);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for (name, full) in resolved {
+        out.push(format!("import {{ {name} }} from '{full}';"));
+    }
+    for name in unresolved {
+        out.push(format!("// import {{ {name} }} from '...';"));
+    }
+    out
+}
+
+/// 扫描方法体，反推类属性字段。
+///
+/// `.field` 行缺失时，从 `stobjbyname` / `definefieldbyname` /
+/// `stprivateproperty` 等属性写指令提取字段名。返回 `(修饰符+名, 类型)`；
+/// 类型统一为 `any`（`.pa` 无类型信息）。
+fn collect_fields_from_methods(rec: &PaRecord) -> Vec<(String, &'static str)> {
+    use instr::{classify, parse_line, Kind, Line};
+
+    let mut out: Vec<(String, &'static str)> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for m in &rec.methods {
+        for raw in &m.body {
+            let line = parse_line(raw);
+            let insn = match line {
+                Line::Insn(i) => i,
+                _ => continue,
+            };
+            match classify(&insn) {
+                Kind::StoreProp(n) | Kind::DefineProperty(n) => {
+                    if !n.is_empty() && seen.insert(n.clone()) {
+                        out.push((format!("public {n}"), "any"));
+                    }
+                }
+                Kind::StorePrivateProp(n) => {
+                    if !n.is_empty() && seen.insert(n.clone()) {
+                        out.push((format!("private {n}"), "any"));
+                    }
+                }
+                _ => {}
+            }
+        }
     }
     out
 }
@@ -737,7 +871,7 @@ fn unreachable_block(env: &Env, lo: usize, hi: usize) -> Option<Stmt> {
     if raws.is_empty() {
         return None;
     }
-    let mut all = vec!["未还原的后续指令:".to_string()];
+    let mut all = vec!["未还原的后续指令（不可达）:".to_string()];
     all.extend(raws);
     Some(Stmt::Raw(all))
 }
@@ -1384,7 +1518,7 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
         Kind::Nop => {}
         Kind::Other => {
             flush!();
-            out.push(Stmt::Raw(vec![pline.raw.clone()]));
+            out.push(Stmt::Raw(vec!["未还原的指令:".to_string(), pline.raw.clone()]));
             return StepResult::Normal;
         }
     }
@@ -1564,12 +1698,9 @@ pub fn render_stmts(stmts: &[Stmt], depth: usize, out: &mut String) {
             }
             Stmt::Comment(text) => out.push_str(&format!("{pad}// {text}\n")),
             Stmt::Raw(lines) => {
-                out.push_str(&format!("{pad}/* 未还原的指令:\n"));
                 for l in lines {
-                    let safe = l.replace("*/", "* /");
-                    out.push_str(&format!("{pad}   {safe}\n"));
+                    out.push_str(&format!("{pad}// {l}\n"));
                 }
-                out.push_str(&format!("{pad}*/\n"));
             }
         }
     }
@@ -1782,7 +1913,7 @@ mod tests {
 "#;
         let pa = PaFile::parse(pa_text);
         let names = Names::default();
-        let out = crate::decompiler::record_to_arkts(&pa.records[0], &names);
+        let out = crate::decompiler::record_to_arkts(&pa.records[0], &pa.records, &names);
         assert!(
             out.contains("class entry_src_main_ets_pages_Index {"),
             "out: {out}"
@@ -1791,5 +1922,57 @@ mod tests {
         assert!(out.contains("constructor(p1: any)"));
         assert!(out.contains("static get(p1: any): any"));
         assert!(out.contains("\"hello\""));
+    }
+
+    #[test]
+    fn infers_fields_from_method_body_when_field_missing() {
+        use crate::pa::PaFile;
+        let pa_text = r#"
+.record Lfoo.Bar; {
+	.access_flags public
+}
+
+.function any Lfoo.Bar;.ctor(any) <static false> {
+	lda.str "v"
+	sta v1
+	lda v1
+	stobjbyname 0x0, "value"
+	lda v0
+	returnobject
+}
+"#;
+        let pa = PaFile::parse(pa_text);
+        let out = crate::decompiler::record_to_arkts(&pa.records[0], &pa.records, &Names::default());
+        assert!(
+            out.contains("public value: any"),
+            "out: {out}"
+        );
+    }
+
+    #[test]
+    fn emits_import_for_sibling_record_reference() {
+        use crate::pa::PaFile;
+        let pa_text = r#"
+.record Lfoo.Bar; {
+	.access_flags public
+}
+
+.record Lfoo.Helper; {
+	.access_flags public
+}
+
+.function any Lfoo.Bar;.use(any) <static true> {
+	ldmodulevar 0x0, v0
+	returnobject
+}
+"#;
+        let mut names = Names::default();
+        names.set(0, "Helper");
+        let pa = PaFile::parse(pa_text);
+        let out = crate::decompiler::record_to_arkts(&pa.records[0], &pa.records, &names);
+        assert!(
+            out.contains("import { Helper } from 'foo.Helper';"),
+            "out: {out}"
+        );
     }
 }

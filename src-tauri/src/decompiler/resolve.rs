@@ -40,6 +40,12 @@ impl Names {
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
+
+    /// 插入一条字面量名称（主要供测试构造名称表）。
+    #[cfg(test)]
+    pub fn set(&mut self, id: i64, name: &str) {
+        self.map.insert(id, name.to_string());
+    }
 }
 
 /// 判断一行是否是字面量池段落的数组头，返回其索引。

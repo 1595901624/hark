@@ -492,7 +492,7 @@ impl Project {
             Some(NodePayload::Class { unit, record }) => {
                 let u = &self.units[*unit];
                 let rec = u.pa.records.get(*record).ok_or("record missing")?;
-                let body = decompiler::record_to_arkts(rec, &u.names);
+                let body = decompiler::record_to_arkts(rec, &u.pa.records, &u.names);
                 Ok(NodeContent {
                     title: rec.display_name.clone(),
                     language: "ts".into(),

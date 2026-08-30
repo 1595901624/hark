@@ -22,8 +22,8 @@ use crate::pa::{PaMethod, PaRecord};
 use self::resolve::Names;
 
 /// 还原整个类（record）为 ArkTS 源码。
-pub fn record_to_arkts(rec: &PaRecord, names: &Names) -> String {
-    emit::record_to_arkts(rec, names)
+pub fn record_to_arkts(rec: &PaRecord, siblings: &[PaRecord], names: &Names) -> String {
+    emit::record_to_arkts(rec, siblings, names)
 }
 
 /// 还原单个方法为独立函数源码。
