@@ -22,7 +22,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog"
 import { getCurrentWebview } from "@tauri-apps/api/webview"
-import { Download, FileCode2, FolderOpen, FolderTree, LoaderCircle, Search } from "lucide-react"
+import { Crosshair, Download, FileCode2, FolderOpen, FolderTree, LoaderCircle, Search } from "lucide-react"
 import { ChevronsDownUp, ChevronsUpDown } from "lucide-react"
 import { Button, addToast } from "../ui/base-ui"
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from "../ui/base-ui"
@@ -753,6 +753,13 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
 
   /** 当前激活的标签状态。 */
   const activeTab = tabs.find(entry => entry.tab.key === activeKey)
+
+  /** 定位到当前激活标签对应的项目树节点（展开祖先并滚动到可视区）。 */
+  const revealActiveNode = useCallback(() => {
+    if (!tree || !activeTab) return
+    setTreeCommand({ type: "reveal-node", nodeId: activeTab.tab.nodeId, seq: ++treeCommandSeq.current })
+  }, [tree, activeTab])
+
   /** 激活标签当前视图的内容状态 */
   const activeContent = activeTab?.contents[activeTab.view]
   const activeLoading = activeTab?.loading[activeTab.view]
@@ -869,6 +876,18 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
                     isIconOnly
                     size="sm"
                     variant="light"
+                    aria-label="定位当前文件"
+                    title="定位当前文件"
+                    isDisabled={!activeTab}
+                    onPress={revealActiveNode}
+                    className="h-6 w-6 min-w-6 rounded-md text-default-500 hover:bg-black/[0.05] dark:hover:bg-white/[0.07] disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Crosshair className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    isIconOnly
+                    size="sm"
+                    variant="light"
                     aria-label="全部展开"
                     title="全部展开"
                     onPress={expandAll}
@@ -887,18 +906,19 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
                   >
                     <ChevronsDownUp className="h-3.5 w-3.5" />
                   </Button>
+                  <Button
+                    isIconOnly
+                    size="sm"
+                    variant="light"
+                    aria-label="打开文件"
+                    title="打开文件"
+                    onPress={() => void pickAndOpen()}
+                    className="h-6 w-6 min-w-6 rounded-md text-default-500 hover:bg-black/[0.05] dark:hover:bg-white/[0.07]"
+                  >
+                    <FolderOpen className="h-3.5 w-3.5" />
+                  </Button>
                 </>
               )}
-              <Button
-                isIconOnly
-                size="sm"
-                variant="light"
-                aria-label="打开文件"
-                onPress={() => void pickAndOpen()}
-                className="h-6 w-6 min-w-6 rounded-md text-default-500 hover:bg-black/[0.05] dark:hover:bg-white/[0.07]"
-              >
-                <FolderOpen className="h-3.5 w-3.5" />
-              </Button>
             </div>
           </div>
           {sidebarView === "tree" ? (

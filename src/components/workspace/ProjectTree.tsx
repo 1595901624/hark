@@ -21,9 +21,11 @@ import type { NodeKind, TreeNode } from "../../lib/api"
 
 /** 树展开/折叠指令：`seq` 递增以触发重复执行同类型指令。 */
 export interface TreeCommand {
-  type: "expand-all" | "collapse-all" | "set-expanded"
+  type: "expand-all" | "collapse-all" | "set-expanded" | "reveal-node"
   /** `set-expanded` 指令要恢复为展开状态的节点 ID 列表。 */
   ids?: number[]
+  /** `reveal-node` 指令要定位到的节点 ID。 */
+  nodeId?: number
   seq: number
 }
 
@@ -59,7 +61,7 @@ export function ProjectTree({ tree, activeNodeId, onOpenNode, command, onExpande
     return initial
   })
 
-  // 响应外部「全部展开 / 全部折叠 / 恢复展开集合」指令
+  // 响应外部「全部展开 / 全部折叠 / 恢复展开集合 / 定位节点」指令
   useEffect(() => {
     if (!command) return
     if (command.type === "collapse-all") {
@@ -77,6 +79,44 @@ export function ProjectTree({ tree, activeNodeId, onOpenNode, command, onExpande
       walk(tree)
       setExpanded(ids)
       return
+    }
+    if (command.type === "reveal-node") {
+      const targetId = command.nodeId
+      if (targetId == null) return
+      // 求从根到目标节点的祖先路径（含目标自身）
+      const path: number[] = []
+      const findPath = (node: TreeNode): boolean => {
+        path.push(node.id)
+        if (node.id === targetId) return true
+        for (const child of node.children) {
+          if (findPath(child)) return true
+        }
+        path.pop()
+        return false
+      }
+      if (!findPath(tree)) return
+      // 展开全部祖先，保留原有展开集合
+      setExpanded(prev => {
+        const next = new Set(prev)
+        path.forEach(id => next.add(id))
+        return next
+      })
+      // 展开多层祖先后 DOM 可能需要多个渲染周期才提交，
+      // 用 rAF 轮询直到目标节点出现再滚动，避免「需点两次」的问题
+      const idStr = String(targetId)
+      let raf = 0
+      const start = performance.now()
+      const tryScroll = () => {
+        const el = document.querySelector<HTMLElement>(`[data-node-id="${idStr}"]`)
+        if (el) {
+          el.scrollIntoView({ block: "center" })
+          return
+        }
+        if (performance.now() - start > 1000) return
+        raf = requestAnimationFrame(tryScroll)
+      }
+      raf = requestAnimationFrame(tryScroll)
+      return () => cancelAnimationFrame(raf)
     }
     const ids = new Set<number>()
     const walk = (node: TreeNode) => {
@@ -118,6 +158,7 @@ export function ProjectTree({ tree, activeNodeId, onOpenNode, command, onExpande
         <div key={node.id}>
           <button
             type="button"
+            data-node-id={node.id}
             className={cn(
               "group flex h-[26px] w-max min-w-full items-center gap-1 rounded-md px-1.5 text-left text-[12.5px] leading-none whitespace-nowrap transition-colors",
               node.id === activeNodeId
