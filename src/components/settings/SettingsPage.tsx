@@ -1010,7 +1010,7 @@ function AboutSection({ version }: { version: string }) {
           </Button>
         </div>
         <p className="mt-5 max-w-xl text-xs leading-5 text-default-400">
-          Hark 是一个 Ark 字节码（.abc / .hap / .har）反编译工作台，基于 Tauri2 框架构建。
+          Hark 是一个 Ark 字节码（.abc / .hap / .har）反编译工作台。
         </p>
       </div>
     </section>

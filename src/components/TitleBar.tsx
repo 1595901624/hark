@@ -245,7 +245,7 @@ function AboutDialog({ isOpen, onClose, appName, version }: { isOpen: boolean; o
           <img src={appIcon} alt="" className="mb-4 h-20 w-20 rounded-[20px] shadow-md" />
           <h2 className="text-xl font-semibold text-foreground">{appName}</h2>
           <p className="mt-1 text-sm text-default-500">版本 {version}</p>
-          <p className="mt-4 max-w-xs text-sm leading-6 text-default-500">基于 Tauri2 框架的桌面应用。</p>
+          <p className="mt-4 max-w-xs text-sm leading-6 text-default-500">Hark 是一个 Ark 字节码（.abc / .hap / .har）反编译工作台。</p>
         </ModalBody>
         <ModalFooter className="justify-center pb-6">
           <Button color="primary" className="min-w-24" onPress={onClose}>关闭</Button>
