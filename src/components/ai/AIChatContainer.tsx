@@ -49,6 +49,7 @@ function AIChatContainerInner({ onClose, onOpenSettings, context }: AIChatContai
       onRenameConversation={ai.renameConversation}
 
       onStop={ai.stop}
+      onRetry={ai.regenerate}
     />
   )
 }

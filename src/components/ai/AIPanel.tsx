@@ -8,14 +8,14 @@
 import { useEffect, useRef } from "react"
 import {
   Bot, PanelRightClose, Settings, LoaderCircle, AlertCircle,
-  Plus, History, Square, ArrowLeft, X,
+  Plus, History, Square, ArrowLeft, X, RotateCw,
 } from "lucide-react"
 import type { ChatContext } from "../../hooks/useAIChat"
 import type { AiProfile } from "../../lib/ai-profiles"
 import type { ConversationMeta } from "../../lib/ai-history"
 import { ChatMessage } from "./ChatMessage"
 import { ChatInput } from "./ChatInput"
-import { QuickActions } from "./QuickActions"
+import { QUICK_ACTIONS } from "./QuickActions"
 import { ProfileSelector } from "./ProfileSelector"
 import { ConversationList } from "./ConversationList"
 import { Button } from "../ui/base-ui"
@@ -51,6 +51,8 @@ interface AIPanelProps {
 
   // 终止
   onStop: () => void
+  // 重试（重新生成最后一条 AI 消息）
+  onRetry: () => void
 }
 
 export function AIPanel({
@@ -76,6 +78,7 @@ export function AIPanel({
   onDeleteConversation,
   onRenameConversation,
   onStop,
+  onRetry,
 }: AIPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -210,7 +213,14 @@ export function AIPanel({
                     </p>
                   </div>
                 ) : (
-                  messages.map(msg => <ChatMessage key={msg.id} message={msg} />)
+                  messages.map(msg => (
+                    <ChatMessage
+                      key={msg.id}
+                      message={msg}
+                      onRetry={msg.role === "assistant" ? onRetry : undefined}
+                      retryDisabled={isStreaming}
+                    />
+                  ))
                 )}
                 {isStreaming && (
                   <div className="flex items-center gap-2 px-4 py-2 text-[12px] text-default-400">
@@ -230,25 +240,32 @@ export function AIPanel({
                   <div className="mx-3 my-2 flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-[12px] text-danger">
                     <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                     <span className="break-words">{error.message || String(error)}</span>
-                    <button
-                      type="button"
-                      onClick={onClearError}
-                      className="ml-auto shrink-0 rounded p-0.5 transition-colors hover:bg-danger/10"
-                      title="关闭错误提示"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
+                    <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onClearError()
+                          onRetry()
+                        }}
+                        disabled={isStreaming}
+                        className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-40"
+                        title="重试"
+                      >
+                        <RotateCw className="h-3 w-3" />
+                        重试
+                      </button>
+                      <button
+                        type="button"
+                        onClick={onClearError}
+                        className="rounded p-0.5 transition-colors hover:bg-danger/10"
+                        title="关闭错误提示"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
-
-              {/* 快捷操作 */}
-              {messages.length === 0 && (
-                <QuickActions
-                  onAction={prompt => sendMessage({ text: prompt })}
-                  disabled={isStreaming}
-                />
-              )}
 
               {/* 输入框 */}
               <ChatInput
@@ -256,6 +273,7 @@ export function AIPanel({
                 disabled={isStreaming}
                 isStreaming={isStreaming}
                 onStop={onStop}
+                quickActions={QUICK_ACTIONS}
               />
             </>
           )}

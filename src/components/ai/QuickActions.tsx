@@ -22,6 +22,9 @@ const ACTIONS: QuickAction[] = [
   { label: "检测敏感API", prompt: "请检查当前代码中是否存在敏感 API 调用（如隐私权限、网络请求、文件操作等），并给出风险提示。", icon: ShieldQuestion },
 ]
 
+/** 快捷操作常量，供输入框折叠菜单复用。 */
+export const QUICK_ACTIONS = ACTIONS
+
 export function QuickActions({ onAction, disabled }: QuickActionsProps) {
   return (
     <div className="flex flex-wrap gap-1.5 px-3 py-2">

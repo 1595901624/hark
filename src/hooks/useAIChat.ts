@@ -311,6 +311,7 @@ export function useAIChat(context: ChatContext | null) {
     status: chat.status,
     error: chat.error,
     clearError: chat.clearError,
+    regenerate: chat.regenerate,
     stop,
 
     // profile
