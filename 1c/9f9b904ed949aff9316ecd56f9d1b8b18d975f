@@ -1,0 +1,59 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.1",
+  "base_commit_sha": "1c9f9b904ed949aff9316ecd56f9d1b8b18d975f",
+  "prompts": {},
+  "commit_stats": {
+    "git_diff_added_lines": 51,
+    "git_diff_deleted_lines": 4,
+    "ai_additions": 0,
+    "ai_accepted": 0,
+    "BYMC": 51,
+    "mixed_additions": 0,
+    "BYAC": 0,
+    "BYRC": 0,
+    "per_file": {
+      "src/components/ai/AIChatContainer.tsx": {
+        "BYMC": [
+          "34"
+        ],
+        "BYAC": [],
+        "BYRC": []
+      },
+      "src/components/ai/AIPanel.tsx": {
+        "BYMC": [
+          "11",
+          "33",
+          "64",
+          "232-240"
+        ],
+        "BYAC": [],
+        "BYRC": []
+      },
+      "src/hooks/useAIChat.ts": {
+        "BYMC": [
+          "119-124",
+          "127-128",
+          "139",
+          "226",
+          "238",
+          "248",
+          "313"
+        ],
+        "BYAC": [],
+        "BYRC": []
+      },
+      "src/lib/ai-transport.ts": {
+        "BYMC": [
+          "27-47",
+          "62-65"
+        ],
+        "BYAC": [],
+        "BYRC": []
+      }
+    }
+  },
+  "commit_timestamp": 1788169308,
+  "requirement_id": ""
+}
