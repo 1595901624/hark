@@ -8,7 +8,7 @@
 import { useEffect, useRef } from "react"
 import {
   Bot, PanelRightClose, Settings, LoaderCircle, AlertCircle,
-  Plus, History, Square, ArrowLeft,
+  Plus, History, Square, ArrowLeft, X,
 } from "lucide-react"
 import type { ChatContext } from "../../hooks/useAIChat"
 import type { AiProfile } from "../../lib/ai-profiles"
@@ -30,6 +30,7 @@ interface AIPanelProps {
   sendMessage: (msg: { text: string }) => void
   status: string
   error: Error | undefined
+  onClearError: () => void
   configReady: boolean
   configLoaded: boolean
 
@@ -60,6 +61,7 @@ export function AIPanel({
   sendMessage,
   status,
   error,
+  onClearError,
   configReady,
   configLoaded,
   profiles,
@@ -227,7 +229,15 @@ export function AIPanel({
                 {error && (
                   <div className="mx-3 my-2 flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-[12px] text-danger">
                     <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    <span className="break-words">{String(error)}</span>
+                    <span className="break-words">{error.message || String(error)}</span>
+                    <button
+                      type="button"
+                      onClick={onClearError}
+                      className="ml-auto shrink-0 rounded p-0.5 transition-colors hover:bg-danger/10"
+                      title="关闭错误提示"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
                   </div>
                 )}
               </div>

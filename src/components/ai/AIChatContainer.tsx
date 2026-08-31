@@ -31,6 +31,7 @@ function AIChatContainerInner({ onClose, onOpenSettings, context }: AIChatContai
       sendMessage={ai.sendMessage}
       status={ai.status}
       error={ai.error}
+      onClearError={ai.clearError}
       configReady={ai.configReady}
       configLoaded={ai.configLoaded}
 

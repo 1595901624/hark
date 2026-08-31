@@ -116,9 +116,16 @@ export function useAIChat(context: ChatContext | null) {
     return createChatTransport(tc, () => systemPromptRef.current)
   }, [activeProfile])
 
-  const chat = useChat({ transport })
+  const chat = useChat({
+    transport,
+    onError: (error) => {
+      console.error("[AI Chat]", error)
+    },
+  })
   const setMessagesRef = useRef(chat.setMessages)
   setMessagesRef.current = chat.setMessages
+  const clearErrorRef = useRef(chat.clearError)
+  clearErrorRef.current = chat.clearError
 
   // ---- 项目变化时重载会话列表并清空当前对话 ----
   useEffect(() => {
@@ -129,6 +136,7 @@ export function useAIChat(context: ChatContext | null) {
     }
     // 切换项目时清空当前活跃对话，避免旧项目消息残留
     setMessagesRef.current([])
+    clearErrorRef.current()
     setActiveConversationId(null)
     setShowConversationList(false)
   }, [context?.projectPath, reloadConversations])
@@ -215,6 +223,7 @@ export function useAIChat(context: ChatContext | null) {
     // 先保存当前对话
     void persistCurrentConversation()
     chat.setMessages([])
+    clearErrorRef.current()
     setActiveConversationId(null)
     setShowConversationList(false)
   }, [chat, persistCurrentConversation])
@@ -226,6 +235,7 @@ export function useAIChat(context: ChatContext | null) {
     const conv = await loadConversation(id)
     if (!conv) return
     chat.setMessages(conv.messages as UIMessage[])
+    clearErrorRef.current()
     setActiveConversationId(id)
     setShowConversationList(false)
   }, [chat, persistCurrentConversation])
@@ -235,6 +245,7 @@ export function useAIChat(context: ChatContext | null) {
     await deleteConversation(id)
     if (activeConversationIdRef.current === id) {
       chat.setMessages([])
+      clearErrorRef.current()
       setActiveConversationId(null)
     }
     if (contextRef.current?.projectPath) {
@@ -299,6 +310,7 @@ export function useAIChat(context: ChatContext | null) {
     sendMessage: chat.sendMessage,
     status: chat.status,
     error: chat.error,
+    clearError: chat.clearError,
     stop,
 
     // profile

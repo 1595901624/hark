@@ -24,6 +24,27 @@ export interface TransportConfig extends ProviderConfig {
  * @param config 供应商/模型/温度配置
  * @param systemPrompt 可选系统提示词（每次调用时读取最新值）
  */
+/**
+ * 格式化底层错误为可展示的字符串，尽量保留真实信息（状态码、响应体）。
+ * 采用 duck-typing 读取 AI SDK `APICallError` 常见字段，避免类型耦合。
+ */
+function formatStreamError(error: unknown): string {
+  if (error instanceof Error) {
+    const anyErr = error as { statusCode?: unknown; responseBody?: unknown; message?: unknown }
+    const statusCode = typeof anyErr.statusCode === "number" ? anyErr.statusCode : undefined
+    const body = typeof anyErr.responseBody === "string" ? anyErr.responseBody : undefined
+    const msg = error.message || String(error)
+    if (statusCode !== undefined && body) {
+      return `[HTTP ${statusCode}] ${body}`
+    }
+    if (statusCode !== undefined) {
+      return `[HTTP ${statusCode}] ${msg}`
+    }
+    return msg
+  }
+  return String(error)
+}
+
 export function createChatTransport(config: TransportConfig, getSystemPrompt: () => string | undefined) {
   const provider = createProvider(config)
   const model = provider.chat(config.model)
@@ -38,7 +59,10 @@ export function createChatTransport(config: TransportConfig, getSystemPrompt: ()
         temperature: config.temperature,
         abortSignal,
       })
-      return toUIMessageStream({ stream: result.stream }) as ReadableStream<UIMessageChunk>
+      return toUIMessageStream({
+        stream: result.stream,
+        onError: formatStreamError,
+      }) as ReadableStream<UIMessageChunk>
     },
     async reconnectToStream() {
       return null
