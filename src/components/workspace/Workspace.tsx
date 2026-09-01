@@ -22,7 +22,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog"
 import { getCurrentWebview } from "@tauri-apps/api/webview"
-import { Crosshair, Download, FileCode2, FolderOpen, FolderTree, LoaderCircle, Search } from "lucide-react"
+import { Crosshair, Download, FileCode2, FolderOpen, FolderTree, LoaderCircle, Search, TriangleAlert } from "lucide-react"
 import { ChevronsDownUp, ChevronsUpDown } from "lucide-react"
 import { Button, addToast } from "../ui/base-ui"
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from "../ui/base-ui"
@@ -113,14 +113,14 @@ async function readStoredToolPath(): Promise<string> {
   }
 }
 
-/** 读取设置页持久化的默认文件打开模式（未加载时回退 `.ets`）。 */
+/** 读取设置页持久化的默认文件打开模式（未加载时回退 `.abc`）。 */
 function readDefaultOpenView(): ViewKind {
   const cached = getCachedStoredItem("default-open-view")
-  if (cached === undefined || cached === null) return "ets"
+  if (cached === undefined || cached === null) return "abc"
   try {
-    return JSON.parse(cached) === "abc" ? "abc" : "ets"
+    return JSON.parse(cached) === "ets" ? "ets" : "abc"
   } catch {
-    return "ets"
+    return "abc"
   }
 }
 
@@ -1048,6 +1048,15 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
             <EmptyState icon={<FileCode2 className="h-10 w-10 text-default-300" />} text={activeError} />
           ) : activeContent ? (
             <div className="relative flex min-h-0 flex-1 flex-col">
+              {activeTab.view === "ets" && (
+                <div className="flex shrink-0 items-start gap-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-xs leading-5 text-warning-700 dark:text-warning-300">
+                  <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    当前为 ArkTS 还原视图，结果仅供参考。该还原仍处于不稳定的测试阶段，
+                    可能存在与原始源码不一致的语法、结构或语义偏差，请以反汇编（.abc）视图为准核对。
+                  </span>
+                </div>
+              )}
               <CodeView
                 content={activeContent.body}
                 language={activeContent.language}

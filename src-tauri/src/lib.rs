@@ -60,9 +60,11 @@ impl AppState {
 
 /// 解析随应用分发的内置 `ark_disasm` 路径。
 ///
-/// 资源目录布局固定为 `resources/bin/<平台>/<可执行名>`：
-/// - Windows: `resources/bin/windows/ark_disasm.exe`
-/// - macOS / Linux: `resources/bin/{macos|linux}/ark_disasm`
+/// 资源目录布局按平台与 CPU 架构分目录：
+/// `resources/bin/<平台>/<架构>/<可执行名>`
+/// - Windows (仅 64 位): `resources/bin/windows/x86_64/ark_disasm.exe`
+/// - macOS (arm + x86): `resources/bin/macos/{aarch64|x86_64}/ark_disasm`
+/// - Linux (仅 x86): `resources/bin/linux/x86_64/ark_disasm`
 ///
 /// 开发模式下资源目录即 `src-tauri`，与打包后的安装布局一致，
 /// 因此开发与生产使用同一相对路径。解析失败时返回 `None`。
@@ -74,6 +76,15 @@ fn resolve_bundled_tool(app: &tauri::AppHandle) -> Option<PathBuf> {
     } else {
         "linux"
     };
+    let arch = if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else if cfg!(target_arch = "x86") {
+        "x86"
+    } else {
+        return None;
+    };
     let exe = if cfg!(windows) {
         "ark_disasm.exe"
     } else {
@@ -81,7 +92,7 @@ fn resolve_bundled_tool(app: &tauri::AppHandle) -> Option<PathBuf> {
     };
     app.path()
         .resolve(
-            format!("resources/bin/{platform}/{exe}"),
+            format!("resources/bin/{platform}/{arch}/{exe}"),
             tauri::path::BaseDirectory::Resource,
         )
         .ok()

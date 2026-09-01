@@ -58,7 +58,7 @@ pub fn locate(configured: Option<&str>, bundled: Option<&Path>) -> Result<PathBu
         }
     }
     Err("未找到 ark_disasm。请将官方二进制放入应用资源目录 \
-         （resources/bin/<windows|macos|linux>/），\
+         （resources/bin/<windows|macos|linux>/<架构>/），\
          或在设置中配置 ark_disasm 路径。"
         .into())
 }

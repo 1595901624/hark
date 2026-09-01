@@ -25,7 +25,7 @@
 - **可视化浏览**：jadx-gui 风格布局，左侧项目树 / 全局搜索双视图 + 右侧多标签代码区
 - **双视图**：每个单元同时提供 `.abc` 反汇编与 `.ets`（ArkTS 还原）视图，按需加载并缓存
 - **可追溯**：工作区快照可保存为 `.hark` 文件，完整恢复标签、视图与项目树展开现场
-- **跨平台**：Windows 10/11、macOS 10.13+（Intel & Apple Silicon）
+- **跨平台**：Windows 10/11（64 位）、macOS 10.13+（Intel & Apple Silicon）、Linux（x86_64）
 
 Hark 基于 [Tauri v2](https://v2.tauri.app/) + [React](https://react.dev/) 构建，内置 `ark_disasm` 并提供路径配置。
 
@@ -110,10 +110,14 @@ pnpm install
 
 如需内置 `ark_disasm`，从 [OpenHarmony ArkCompiler 工具链](https://repo.huaweicloud.com/openharmony/os/) 的 `toolchains` 包中获取对应平台二进制，按下方结构放入：
 
+> 平台架构支持：macOS 同时支持 ARM（Apple Silicon）与 x86 两个架构；
+> Windows 仅支持 64 位（x86_64）架构；Linux 支持 x86（x86_64）架构。
+
 ```
 src-tauri/resources/bin/
-├── windows/ark_disasm.exe
-└──  macos/ark_disasm        (aarch64 / x86_64)
+├── windows/ark_disasm.exe   (x86_64，64 位)
+├── macos/ark_disasm         (aarch64 / x86_64)
+└── linux/ark_disasm         (x86_64)
 ```
 
 macOS / Linux 下记得赋予执行权限：`chmod +x ark_disasm`。

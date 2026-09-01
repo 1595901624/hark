@@ -404,7 +404,7 @@ function DecompilerToolSection() {
 /** 配置子页：默认文件打开模式。 */
 function DecompilerConfigSection() {
   /** 默认文件打开模式（持久化，与工作台打开节点时读取的键一致）。 */
-  const [defaultOpenView, setDefaultOpenView] = usePersistentState<ViewKind>("default-open-view", "ets")
+  const [defaultOpenView, setDefaultOpenView] = usePersistentState<ViewKind>("default-open-view", "abc")
   /** 点击方法时是否在新页面打开（持久化，与工作台读取的键一致）。 */
   const [openMethodInNewTab, setOpenMethodInNewTab] = usePersistentState<boolean>("open-method-in-new-tab", false)
 
@@ -422,7 +422,7 @@ function DecompilerConfigSection() {
             <div className="min-w-0">
               <div className="text-sm font-medium text-foreground">默认文件打开模式</div>
               <p className="mt-1 max-w-xl text-xs leading-5 text-default-400">
-                选择点击文件时默认打开的视图。选中 .ets 时，每次点开文件将直接以 ArkTS 还原视图打开。
+                选择点击文件时默认打开的视图。选中 .abc 时，每次点开文件将直接以反汇编文本视图打开。
               </p>
               <div className="mt-3">
                 <RadioGroup
@@ -430,8 +430,8 @@ function DecompilerConfigSection() {
                   onValueChange={(v) => setDefaultOpenView(v as ViewKind)}
                   className="gap-2"
                 >
-                  <Radio value="ets">.ets（ArkTS 还原）</Radio>
                   <Radio value="abc">.abc（反汇编文本）</Radio>
+                  <Radio value="ets">.ets（ArkTS 还原）</Radio>
                 </RadioGroup>
               </div>
             </div>
