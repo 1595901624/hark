@@ -132,21 +132,26 @@ export function SettingsPage({ activeSection, onSectionChange, onBack }: Setting
         <span className="text-[12.5px] font-medium text-default-500">设置</span>
       </header>
 
-      {/* 设置卡片：左分区导航 + 右设置项 */}
+      {/* 设置主体：左分区导航 + 右设置项 */}
       <div className="min-h-0 flex-1 overflow-hidden">
-        <div className="mx-auto h-full w-full max-w-5xl px-6 py-5">
-          <div className="flex h-full min-h-0 overflow-hidden rounded-xl border border-default-200">
+        <div className="h-full w-full px-6 py-5">
+          <div className="flex h-full min-h-0 overflow-hidden">
             <nav
-              className="flex shrink-0 gap-1 overflow-x-auto border-b border-default-200 bg-default-50/45 p-2 md:flex-col md:overflow-x-visible md:border-b-0 md:border-r md:p-3"
+              className="flex shrink-0 gap-1 overflow-x-auto border-b border-default-200/60 p-2 md:flex-col md:overflow-x-visible md:border-b-0 md:border-r md:px-3 md:py-2"
               aria-label="设置分区"
             >
-              {SECTIONS.map(({ id, label, icon: Icon }) => (
-                <div key={id} className="flex shrink-0 flex-col gap-1 md:w-full">
+              {SECTIONS.map(({ id, label, icon: Icon }) => {
+                const isActive = activeSection === id
+                return (
+                <div key={id} className="relative flex shrink-0 flex-col gap-1 md:w-full">
+                  {isActive && (
+                    <span className="absolute left-0 top-1.5 bottom-1.5 hidden w-0.5 rounded bg-primary md:block" />
+                  )}
                   <Button
                     size="sm"
-                    color={activeSection === id ? "primary" : "default"}
-                    variant={activeSection === id ? "flat" : "light"}
-                    className="h-9 shrink-0 justify-start px-3 md:w-full"
+                    color={isActive ? "primary" : "default"}
+                    variant={isActive ? "light" : "light"}
+                    className="h-8 shrink-0 justify-start px-2.5 md:w-full"
                     onPress={() => onSectionChange(id)}
                     startContent={<Icon className="h-4 w-4" />}
                   >
@@ -154,14 +159,16 @@ export function SettingsPage({ activeSection, onSectionChange, onBack }: Setting
                   </Button>
                   {/* 反编译分区的子菜单 */}
                   {id === "decompiler" && (
-                    <div className="flex shrink-0 gap-1 pl-3 md:flex-col md:pl-5">
-                      {DECOMPILER_SUBS.map(({ id: subId, label: subLabel, icon: SubIcon }) => (
+                    <div className="flex shrink-0 gap-1 pl-3 md:flex-col md:pl-6">
+                      {DECOMPILER_SUBS.map(({ id: subId, label: subLabel, icon: SubIcon }) => {
+                        const subActive = activeSection === "decompiler" && decompilerSub === subId
+                        return (
                         <Button
                           key={subId}
                           size="sm"
-                          color={activeSection === "decompiler" && decompilerSub === subId ? "primary" : "default"}
-                          variant={activeSection === "decompiler" && decompilerSub === subId ? "flat" : "light"}
-                          className="h-8 shrink-0 justify-start px-3 text-[12px] md:w-full"
+                          color={subActive ? "primary" : "default"}
+                          variant={subActive ? "light" : "light"}
+                          className="h-7 shrink-0 justify-start px-3 text-[12px] md:w-full"
                           onPress={() => {
                             setDecompilerSub(subId)
                             onSectionChange("decompiler")
@@ -170,11 +177,13 @@ export function SettingsPage({ activeSection, onSectionChange, onBack }: Setting
                         >
                           {subLabel}
                         </Button>
-                      ))}
+                        )
+                      })}
                     </div>
                   )}
                 </div>
-              ))}
+                )
+              })}
             </nav>
 
             <div className="min-h-0 flex-1 overflow-y-auto">
@@ -192,12 +201,12 @@ export function SettingsPage({ activeSection, onSectionChange, onBack }: Setting
   )
 }
 
-/** 分区标题（大标题 + 可选描述，底部细分隔线）。 */
+/** 分区标题（大标题 + 可选描述，纯留白分隔）。 */
 function SectionHeader({ id, title, description }: { id: string; title: string; description?: string }) {
   return (
-    <div className="border-b border-default-200 px-5 py-4">
-      <h2 id={id} className="text-base font-semibold text-foreground">{title}</h2>
-      {description && <p className="mt-1 text-xs text-default-400">{description}</p>}
+    <div className="px-5 pt-5 pb-3">
+      <h2 id={id} className="text-sm font-semibold text-foreground">{title}</h2>
+      {description && <p className="mt-0.5 text-[11px] text-default-400">{description}</p>}
     </div>
   )
 }
@@ -207,8 +216,8 @@ function AppearanceSection() {
   return (
     <section aria-labelledby="appearance-settings-heading">
       <SectionHeader id="appearance-settings-heading" title="外观" description="自定义 Hark 的界面显示效果。" />
-      <div className="divide-y divide-default-200 px-5">
-        <div className="flex flex-wrap items-center justify-between gap-4 py-4">
+      <div className="px-5">
+        <div className="flex flex-wrap items-center justify-between gap-4 py-3.5">
           <div className="flex min-w-0 items-start gap-3">
             <Palette className="mt-0.5 h-4 w-4 shrink-0 text-default-400" />
             <div>
@@ -318,8 +327,8 @@ function DecompilerToolSection() {
         title="反编译器"
         description="配置用于反编译 Ark 字节码的外部工具。"
       />
-      <div className="divide-y divide-default-200 px-5">
-        <div className="py-4">
+      <div className="px-5">
+        <div className="py-3.5">
           <div className="flex items-start gap-3">
             <FileCode2 className="mt-0.5 h-4 w-4 shrink-0 text-default-400" />
             <div className="min-w-0">
@@ -406,8 +415,8 @@ function DecompilerConfigSection() {
         title="配置"
         description="配置文件打开方式与默认视图。"
       />
-      <div className="divide-y divide-default-200 px-5">
-        <div className="py-4">
+      <div className="px-5">
+        <div className="py-3.5">
           <div className="flex items-start gap-3">
             <SlidersHorizontal className="mt-0.5 h-4 w-4 shrink-0 text-default-400" />
             <div className="min-w-0">
@@ -428,7 +437,7 @@ function DecompilerConfigSection() {
             </div>
           </div>
         </div>
-        <div className="py-4">
+        <div className="py-3.5">
           <div className="flex items-start gap-3">
             <SlidersHorizontal className="mt-0.5 h-4 w-4 shrink-0 text-default-400" />
             <div className="min-w-0">
@@ -643,7 +652,7 @@ function AISection() {
     return (
       <section>
         <SectionHeader id="ai-settings-heading" title="AI 助手" description="配置 AI 模型提供商与 API 密钥。" />
-        <div className="p-5 text-sm text-default-400">正在加载配置…</div>
+        <div className="px-5 py-4 text-sm text-default-400">正在加载配置…</div>
       </section>
     )
   }
@@ -653,9 +662,9 @@ function AISection() {
   return (
     <section aria-labelledby="ai-settings-heading">
       <SectionHeader id="ai-settings-heading" title="AI 助手" description="管理 AI 模型配置档案，支持多供应商切换。" />
-      <div className="divide-y divide-default-200 px-5">
+      <div className="px-5">
         {/* Profile 列表 */}
-        <div className="py-4">
+        <div className="py-3.5">
           <div className="flex items-center justify-between">
             <div className="text-sm font-medium text-foreground">配置档案</div>
             <Button
@@ -729,7 +738,7 @@ function AISection() {
 
         {/* 编辑/新建表单 */}
         {showEditForm && (
-          <div className="py-4">
+          <div className="py-3.5">
             <div className="mb-3 flex items-center justify-between">
               <div className="text-sm font-medium text-foreground">
                 {isCreating ? "新建配置" : "编辑配置"}
@@ -935,8 +944,8 @@ function DataSection() {
   return (
     <section aria-labelledby="data-settings-heading">
       <SectionHeader id="data-settings-heading" title="数据管理" description="管理应用的本地数据与缓存。" />
-      <div className="p-5">
-        <div className="flex flex-wrap items-center justify-between gap-6 rounded-xl border border-warning/35 bg-warning/5 p-4">
+      <div className="px-5 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-6 rounded-lg border border-warning/30 bg-warning/5 p-3.5">
           <div className="flex min-w-0 items-start gap-3">
             <Database className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
             <div>
@@ -990,7 +999,7 @@ function AboutSection({ version }: { version: string }) {
   return (
     <section aria-labelledby="about-settings-heading">
       <SectionHeader id="about-settings-heading" title="关于" />
-      <div className="p-5">
+      <div className="px-5 py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <img src={appIcon} alt="Hark 图标" className="h-12 w-12 rounded-xl border border-default-200 shadow-sm" />
