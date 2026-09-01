@@ -1140,7 +1140,11 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
             return StepResult::Normal;
         }
         Kind::IndexStore(idx_op) => {
-            let obj = st.read_reg(0);
+            let obj = if env.this_key == u16::MAX {
+                Expr::Undefined
+            } else {
+                st.read_reg(env.this_key)
+            };
             let idx = match idx_op {
                 Operand::Reg(r) => st.read_reg(r),
                 other => literal_expr(&other),
@@ -1223,7 +1227,12 @@ fn step(st: &mut Interp, out: &mut Vec<Stmt>, idx: usize, env: &Env) -> StepResu
                 .find_map(|o| o.as_str())
                 .map(|s| Expr::Str(s.to_string()))
                 .unwrap_or_else(|| st.take_acc());
-            let mut args: Vec<Expr> = vec![st.read_reg(0)];
+            let obj = if env.this_key == u16::MAX {
+                Expr::Undefined
+            } else {
+                st.read_reg(env.this_key)
+            };
+            let mut args: Vec<Expr> = vec![obj];
             args.push(name);
             for r in &regs {
                 args.push(st.read_reg(*r));
@@ -1873,6 +1882,22 @@ mod tests {
         let text = render_method_body(&sig, &body, &Names::default());
         assert!(text.contains(".title = "), "text: {text}");
         assert!(text.contains("console.log(\"hi {}\");"), "text: {text}");
+    }
+
+    #[test]
+    fn maps_this_for_arg_regs_index_store() {
+        // arg 寄存器约定：a0 = this；stobjbyvalue 的对象应为 this 而非 v0
+        let sig = sig::parse("void LEntry;.set(any) <static false>");
+        let body = lines(&[
+            "\tlda a1",
+            "\tstobjbyvalue a1, a2",
+            "\treturnundefined",
+        ]);
+        let text = render_method_body(&sig, &body, &Names::default());
+        assert!(
+            text.contains("this[") || text.contains("this ["),
+            "expected this-indexed store, got: {text}"
+        );
     }
 
     #[test]
