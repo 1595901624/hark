@@ -8,8 +8,9 @@
 
 <div align="center">
 <a href="https://github.com/1595901624/hark/releases"><img src="https://img.shields.io/github/v/release/1595901624/hark?display_name=tag&label=version&color=blue" alt="Version"></a>
-<img src="https://img.shields.io/badge/Windows-ComingSoon-blue" alt="Windows">
-<img src="https://img.shields.io/badge/macOS-ComingSoon-blue" alt="macOS">
+<img src="https://img.shields.io/badge/Windows-Supported-blue" alt="Windows">
+<img src="https://img.shields.io/badge/macOS-Supported-blue" alt="macOS">
+<img src="https://img.shields.io/badge/Linux-Supported-blue" alt="Linux">
 <a href="https://www.orcarouter.ai/ref/ref_48d2d80da602e059af48"><img src="https://img.shields.io/badge/Powered_by-OrcaRouter-2563eb" alt="Powered by OrcaRouter"></a>
 <!-- <img src="https://img.shields.io/badge/Linux-Supported-blue" alt="Linux"> -->
 </div>
