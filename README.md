@@ -14,17 +14,20 @@
 <!-- <img src="https://img.shields.io/badge/Linux-Supported-blue" alt="Linux"> -->
 </div>
 
+## 📸 效果演示
+
+![Hark 主界面](demo/home.PNG)
+
 ## 为什么需要 Hark
 
 鸿蒙（HarmonyOS / OpenHarmony）应用以 Ark 字节码（`.abc`）形式分发，分析其行为往往依赖命令行工具 `ark_disasm`，缺少可视化的浏览与检索体验。Hark 把「打开应用包 → 浏览字节码 → 反汇编 / 还原 ArkTS → 全局检索 → 导出」串联成一个流畅的桌面工作台，目标是：
 
-- **纯离线**：所有解析与检索均在本地完成，不上传任何数据
 - **可视化浏览**：jadx-gui 风格布局，左侧项目树 / 全局搜索双视图 + 右侧多标签代码区
 - **双视图**：每个单元同时提供 `.abc` 反汇编与 `.ets`（ArkTS 还原）视图，按需加载并缓存
 - **可追溯**：工作区快照可保存为 `.hark` 文件，完整恢复标签、视图与项目树展开现场
 - **跨平台**：Windows 10/11、macOS 10.13+（Intel & Apple Silicon）
 
-Hark 基于 [Tauri v2](https://v2.tauri.app/) + [React](https://react.dev/) 构建，内置 `ark_disasm` 并提供路径配置，专注于纯离线的反编译工作流。
+Hark 基于 [Tauri v2](https://v2.tauri.app/) + [React](https://react.dev/) 构建，内置 `ark_disasm` 并提供路径配置。
 
 ## ✨ 特性亮点
 
@@ -128,11 +131,6 @@ pnpm tauri dev
 ```bash
 pnpm tauri build
 ```
-
-## 🔒 隐私
-
-- Hark 定位为**纯离线**反编译工作台，所有解析与检索均在本地完成。
-- 用户输入与打开的文件均在本地处理，不会发送到外部服务器。
 
 ## 📂 项目结构
 
