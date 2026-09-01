@@ -915,27 +915,68 @@ fn flatten_packages(
     }
 }
 
-/// 为压缩包内非 `.abc` 条目构建扁平的资源节点列表（按文件名排序）。
+/// 为压缩包内非 `.abc` 条目按原始路径层级构建嵌套的资源目录树。
+///
+/// 每个条目按 `/` 分段：中间段作为 `ResourceDir` 目录节点（可展开折叠，
+/// 不注册内容载荷），最后一段作为 `Resource` 叶子节点并注册
+/// [`NodePayload::Resource`] 与 `resource_nodes` 映射（供搜索反向定位）。
+/// 同层级内目录节点在前、文件节点在后，各自按名称字典序排序。
 fn build_resource_tree(project: &mut Project) -> Vec<TreeNode> {
-    let entries = project.archive_entries.clone();
-    let mut out = vec![];
-    for (i, path) in entries.iter().enumerate() {
-        let id = project.alloc_id();
-        out.push(TreeNode {
-            id,
-            name: path.rsplit('/').next().unwrap_or(path).to_string(),
-            kind: NodeKind::Resource,
-            detail: match path.rfind('/') {
-                Some(pos) => path[..pos].to_string(),
-                None => String::new(),
-            },
-            children: vec![],
-        });
-        project.nodes.insert(id, NodePayload::Resource { entry: i });
-        project.resource_nodes.insert(i, id);
+    /// 按路径分段聚合的临时目录结构。
+    #[derive(Default)]
+    struct Dir {
+        /// 子目录名 -> 子目录节点（BTreeMap 保证按名称有序）。
+        dirs: std::collections::BTreeMap<String, Dir>,
+        /// 直接挂在该目录下的资源条目（条目下标, 叶子名）。
+        files: Vec<(usize, String)>,
     }
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    out
+
+    let mut root = Dir::default();
+    for (i, path) in project.archive_entries.iter().enumerate() {
+        let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        let (parents, leaf) = match segs.as_slice() {
+            [] => continue,
+            [leaf] => (Vec::new(), (*leaf).to_string()),
+            [rest @ .., leaf] => (rest.to_vec(), (*leaf).to_string()),
+        };
+        let mut node = &mut root;
+        for seg in parents {
+            node = node.dirs.entry(seg.to_string()).or_default();
+        }
+        node.files.push((i, leaf));
+    }
+
+    /// 递归把 [`Dir`] 层级展开为 `TreeNode` 列表（目录在前，文件在后）。
+    fn flush(project: &mut Project, dir: &mut Dir) -> Vec<TreeNode> {
+        let mut out = Vec::new();
+        for (name, child) in &mut dir.dirs {
+            let id = project.alloc_id();
+            let children = flush(project, child);
+            out.push(TreeNode {
+                id,
+                name: name.clone(),
+                kind: NodeKind::ResourceDir,
+                detail: format!("{} items", children.len()),
+                children,
+            });
+        }
+        dir.files.sort_by(|a, b| a.1.cmp(&b.1));
+        for (i, leaf) in &dir.files {
+            let id = project.alloc_id();
+            project.nodes.insert(id, NodePayload::Resource { entry: *i });
+            project.resource_nodes.insert(*i, id);
+            out.push(TreeNode {
+                id,
+                name: leaf.clone(),
+                kind: NodeKind::Resource,
+                detail: String::new(),
+                children: vec![],
+            });
+        }
+        out
+    }
+
+    flush(project, &mut root)
 }
 
 /// 节点内容切片，前端代码视图的渲染数据。
@@ -1201,5 +1242,58 @@ mod tests {
             .exists());
 
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// 资源树按包内原始路径层级嵌套构建：目录在前、文件在后，
+    /// `resource_nodes` 覆盖全部条目下标以支持搜索反向定位。
+    #[test]
+    fn builds_nested_resource_tree() {
+        let mut project = bare_project("demo.hap", "hap", PathBuf::from("demo.hap"));
+        project.archive_entries = vec![
+            "ets/modules/page.abc.map".to_string(),
+            "assets/logo.png".to_string(),
+            "ets/index.abc.map".to_string(),
+            "README.md".to_string(),
+        ];
+        project.build_tree();
+
+        // 顶层：resources 目录
+        let root = project.tree();
+        // children: [resources]（无 abc 单元）
+        assert_eq!(root.children.len(), 1);
+        let res = &root.children[0];
+        assert_eq!(res.name, "resources");
+        assert_eq!(res.kind, NodeKind::ResourceDir);
+        // 顶层应含 ets / assets 两个目录 + README.md 文件（目录在前）
+        let top_names: Vec<&str> = res.children.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(top_names, vec!["assets", "ets", "README.md"]);
+        assert_eq!(res.children[0].kind, NodeKind::ResourceDir);
+        assert_eq!(res.children[1].kind, NodeKind::ResourceDir);
+        assert_eq!(res.children[2].kind, NodeKind::Resource);
+
+        // ets 下：modules 目录 + index.abc.map 文件
+        let ets = &res.children[1];
+        let ets_names: Vec<&str> = ets.children.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(ets_names, vec!["modules", "index.abc.map"]);
+        assert_eq!(ets.children[0].kind, NodeKind::ResourceDir);
+        assert_eq!(ets.children[1].kind, NodeKind::Resource);
+
+        // modules 下：page.abc.map
+        let modules = &ets.children[0];
+        assert_eq!(modules.children.len(), 1);
+        assert_eq!(modules.children[0].name, "page.abc.map");
+        assert_eq!(modules.children[0].kind, NodeKind::Resource);
+
+        // assets 下：logo.png
+        let assets = &res.children[0];
+        assert_eq!(assets.children.len(), 1);
+        assert_eq!(assets.children[0].name, "logo.png");
+        assert_eq!(assets.children[0].kind, NodeKind::Resource);
+
+        // resource_nodes 覆盖全部 4 个条目下标
+        assert_eq!(project.resource_nodes.len(), 4);
+        for i in 0..4 {
+            assert!(project.resource_nodes.contains_key(&i));
+        }
     }
 }
