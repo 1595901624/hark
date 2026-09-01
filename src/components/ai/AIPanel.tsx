@@ -244,7 +244,6 @@ export function AIPanel({
                       <button
                         type="button"
                         onClick={() => {
-                          onClearError()
                           onRetry()
                         }}
                         disabled={isStreaming}

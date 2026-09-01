@@ -304,6 +304,29 @@ export function useAIChat(context: ChatContext | null) {
     chat.stop()
   }, [chat])
 
+  // ---- 重试：清除错误后，移除最后一条失败的 AI 消息并重发上一条用户消息 ----
+  const retry = useCallback(() => {
+    clearErrorRef.current()
+    const msgs = chat.messages
+    // 找到最后一条用户消息的文本
+    let lastUserText: string | undefined
+    let lastUserIndex = -1
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === "user") {
+        lastUserText = msgs[i].parts
+          .map(p => (p.type === "text" ? p.text : ""))
+          .join("")
+          .trim()
+        lastUserIndex = i
+        break
+      }
+    }
+    if (!lastUserText) return
+    // 移除从最后一条用户消息开始的所有消息（含失败的 AI 回复），再重发
+    setMessagesRef.current(msgs.slice(0, lastUserIndex))
+    chat.sendMessage({ text: lastUserText })
+  }, [chat])
+
   return {
     // chat 状态
     messages: chat.messages,
@@ -312,6 +335,7 @@ export function useAIChat(context: ChatContext | null) {
     error: chat.error,
     clearError: chat.clearError,
     regenerate: chat.regenerate,
+    retry,
     stop,
 
     // profile
