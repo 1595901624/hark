@@ -101,6 +101,39 @@ function findTreeNode(root: TreeNode, id: number): TreeNode | null {
   return null
 }
 
+/** `summarizeTree` 的体量约束，避免系统提示词过大。 */
+const TREE_SUMMARY_MAX_DEPTH = 3
+const TREE_SUMMARY_MAX_NODES = 200
+
+/** 把项目树序列化为带缩进的文本摘要，受深度/节点数上限约束。 */
+function summarizeTree(root: TreeNode): string {
+  const lines: string[] = []
+  let nodeCount = 0
+  let truncated = false
+
+  const walk = (node: TreeNode, depth: number): void => {
+    if (truncated) return
+    if (depth > TREE_SUMMARY_MAX_DEPTH) return
+    if (nodeCount >= TREE_SUMMARY_MAX_NODES) {
+      truncated = true
+      return
+    }
+    nodeCount++
+    const indent = "  ".repeat(depth)
+    const detail = node.detail ? ` (${node.detail})` : ""
+    lines.push(`${indent}${node.name} [${node.kind}]${detail}`)
+    for (const child of node.children) {
+      walk(child, depth + 1)
+    }
+  }
+
+  walk(root, 0)
+  if (truncated) {
+    lines.push("…（已截断，仅展示部分结构）")
+  }
+  return lines.join("\n")
+}
+
 /** 读取设置页持久化的 `ark_disasm` 路径（未配置或解析失败时返回空串）。 */
 async function readStoredToolPath(): Promise<string> {
   try {
@@ -765,7 +798,13 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
   const activeLoading = activeTab?.loading[activeTab.view]
   const activeError = activeTab?.errors[activeTab.view]
 
-  /** AI 对话上下文：当前激活标签的代码信息（memoized 避免渲染循环）。 */
+  /** 项目结构摘要：把当前项目树序列化为文本，供 AI 上下文使用。 */
+  const projectTreeSummary = useMemo(
+    () => (tree ? summarizeTree(tree) : undefined),
+    [tree],
+  )
+
+  /** AI 对话上下文：当前激活标签的代码信息 + 项目结构摘要（memoized 避免渲染循环）。 */
   const aiContext = useMemo(
     () => projectPath
       ? {
@@ -774,9 +813,10 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
           activeNodeName: activeTab?.tab.title ?? "",
           activeView: activeTab?.view ?? "abc" as ViewKind,
           codeContent: activeContent?.body ?? "",
+          projectTreeSummary,
         }
       : null,
-    [activeTab, activeContent, projectName, projectPath],
+    [activeTab, activeContent, projectName, projectPath, projectTreeSummary],
   )
 
   // ---------- 侧栏拖宽 ----------
