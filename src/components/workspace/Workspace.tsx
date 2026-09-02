@@ -776,6 +776,26 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
     }
   }, [tabs, activeKey])
 
+  /** 把当前激活标签的文本资源（.json / .info）导出为原始文件。 */
+  const exportActiveResource = useCallback(async () => {
+    const entry = tabs.find(e => e.tab.key === activeKey)
+    const content = entry?.contents.abc
+    if (!entry || !content) return
+    const base = content.title.split("/").pop() ?? "resource"
+    const safeName = base.replace(/[\\/:*?"<>|]/g, "_") || "resource"
+    const selected = await saveFileDialog({
+      defaultPath: `${safeName}`,
+      filters: [{ name: "JSON / Info", extensions: ["json", "info"] }],
+    })
+    if (typeof selected !== "string") return
+    try {
+      await api.exportNodeResource(entry.tab.nodeId, selected)
+      addToast({ title: "导出成功", description: selected, severity: "success" })
+    } catch (e) {
+      addToast({ title: "导出失败", description: String(e), severity: "danger" })
+    }
+  }, [tabs, activeKey])
+
   /**
    * 关闭指定标签；若关闭的是激活标签，则激活相邻的标签。
    * @param key 要关闭的标签 key
@@ -1083,6 +1103,19 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
                   aria-label="导出图片"
                   title="导出图片"
                   onPress={() => void exportActiveImage()}
+                  className="h-6 w-6 min-w-6 rounded-md text-default-500 hover:bg-black/[0.05] dark:hover:bg-white/[0.07]"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                </Button>
+              )}
+              {!busyMessage && activeTab && activeTab.kind === "resource" && activeContent?.language === "json" && (
+                <Button
+                  isIconOnly
+                  size="sm"
+                  variant="light"
+                  aria-label="导出文件"
+                  title="导出文件"
+                  onPress={() => void exportActiveResource()}
                   className="h-6 w-6 min-w-6 rounded-md text-default-500 hover:bg-black/[0.05] dark:hover:bg-white/[0.07]"
                 >
                   <Download className="h-3.5 w-3.5" />

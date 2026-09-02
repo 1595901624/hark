@@ -695,6 +695,8 @@ impl Project {
         }
         fs::write(target, &bytes).map_err(|e| format!("写入 {target:?} 失败: {e}"))
     }
+
+    /// 把项目包含的全部原始 `.abc` 字节码批量导出到目标目录。
     ///
     /// 实际写入位置为 `<dir>/<项目名去扩展名>/`：
     /// - `.abc` 项目：直接把源文件复制为 `<dir>/<stem>/<文件名>`；

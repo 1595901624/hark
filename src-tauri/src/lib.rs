@@ -306,6 +306,22 @@ fn export_node_image(node_id: u32, path: String, state: State<AppState>) -> Resu
     p.export_image(node_id, std::path::Path::new(&path))
 }
 
+/// 导出指定文本资源节点（`.json` / `.info`）的原始内容到目标路径。
+///
+/// 从压缩包中读取条目的原始字节直接写盘，保留原始内容。
+///
+/// # Errors
+/// 无已打开项目、节点无效、非文本资源或写盘失败时返回中文错误信息。
+#[tauri::command]
+fn export_node_resource(node_id: u32, path: String, state: State<AppState>) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("导出路径为空".into());
+    }
+    let guard = state.project.lock().unwrap();
+    let p = guard.as_ref().ok_or("没有已打开的项目")?;
+    p.export_resource(node_id, std::path::Path::new(&path))
+}
+
 /// 把当前项目包含的全部原始 `.abc` 字节码批量导出到目标目录。
 ///
 /// 文件写入 `<dir>/<项目名去扩展名>/` 子目录：`.abc` 项目直接复制源文件；
@@ -446,6 +462,7 @@ pub fn run() {
             export_node_ets,
             export_node_pa,
             export_node_image,
+            export_node_resource,
             export_project_abc,
             export_project_pa,
             set_disassembler_path,

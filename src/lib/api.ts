@@ -227,6 +227,17 @@ export const api = {
   },
 
   /**
+   * 导出指定文本资源节点（`.json` / `.info`）的原始内容到目标路径。
+   *
+   * 从压缩包中读取条目的原始字节直接写盘，保留原始内容。
+   * @param nodeId 项目树节点 ID
+   * @param path 导出文件的绝对路径
+   */
+  exportNodeResource(nodeId: number, path: string): Promise<void> {
+    return invoke<void>("export_node_resource", { nodeId, path })
+  },
+
+  /**
    * 把当前项目包含的全部原始 `.abc` 字节码批量导出到目标目录。
    *
    * 后端在所选目录下自动创建以项目名命名的子目录：`.abc` 项目复制源文件，
