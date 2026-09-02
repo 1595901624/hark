@@ -153,7 +153,11 @@ export function ProjectTree({ tree, activeNodeId, onOpenNode, command, onExpande
     nodes.map(node => {
       const hasChildren = node.children.length > 0
       const isOpen = expanded.has(node.id)
-      const selectable = node.kind === "class" || node.kind === "method" || node.kind === "abc"
+      const selectable =
+        node.kind === "class" ||
+        node.kind === "method" ||
+        node.kind === "abc" ||
+        node.kind === "resource"
       return (
         <div key={node.id}>
           <button

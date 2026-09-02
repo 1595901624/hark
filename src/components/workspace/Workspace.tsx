@@ -756,6 +756,26 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
     }
   }, [tabs, activeKey])
 
+  /** 把当前激活标签的图片资源导出为原始文件。 */
+  const exportActiveImage = useCallback(async () => {
+    const entry = tabs.find(e => e.tab.key === activeKey)
+    const content = entry?.contents.abc
+    if (!entry || !content) return
+    const base = content.title.split("/").pop() ?? "image"
+    const safeName = base.replace(/[\\/:*?"<>|]/g, "_") || "image"
+    const selected = await saveFileDialog({
+      defaultPath: `${safeName}`,
+      filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp"] }],
+    })
+    if (typeof selected !== "string") return
+    try {
+      await api.exportNodeImage(entry.tab.nodeId, selected)
+      addToast({ title: "导出成功", description: selected, severity: "success" })
+    } catch (e) {
+      addToast({ title: "导出失败", description: String(e), severity: "danger" })
+    }
+  }, [tabs, activeKey])
+
   /**
    * 关闭指定标签；若关闭的是激活标签，则激活相邻的标签。
    * @param key 要关闭的标签 key
@@ -1055,6 +1075,19 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
                   )}
                 </div>
               )}
+              {!busyMessage && activeTab && activeTab.kind === "resource" && activeContent?.language === "image" && (
+                <Button
+                  isIconOnly
+                  size="sm"
+                  variant="light"
+                  aria-label="导出图片"
+                  title="导出图片"
+                  onPress={() => void exportActiveImage()}
+                  className="h-6 w-6 min-w-6 rounded-md text-default-500 hover:bg-black/[0.05] dark:hover:bg-white/[0.07]"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                </Button>
+              )}
             </div>
           )}
 
@@ -1087,43 +1120,53 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
           ) : activeError ? (
             <EmptyState icon={<FileCode2 className="h-10 w-10 text-default-300" />} text={activeError} />
           ) : activeContent ? (
-            <div className="relative flex min-h-0 flex-1 flex-col">
-              {activeTab.view === "ets" && (
-                <div className="flex shrink-0 items-start gap-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-xs leading-5 text-warning-700 dark:text-warning-300">
-                  <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span>
-                    当前为 ArkTS 还原视图，结果仅供参考。该还原仍处于不稳定的测试阶段，
-                    可能存在与原始源码不一致的语法、结构或语义偏差，请以反汇编（.abc）视图为准核对。
-                  </span>
-                </div>
-              )}
-              <CodeView
-                content={activeContent.body}
-                language={activeContent.language}
-                findQuery={showFindBar ? findQuery : ""}
-                findCaseSensitive={findCaseSensitive}
-                activeMatchIndex={showFindBar && findTotal > 0 ? activeMatch : -1}
-                onFindStats={setFindTotal}
-                scrollToLine={
-                  scrollTarget && scrollTarget.nodeId === activeTab.tab.nodeId
-                    ? { line: scrollTarget.line, seq: scrollTarget.seq }
-                    : null
-                }
-              />
-              {showFindBar && (
-                <EditorFindBar
-                  query={findQuery}
-                  onQueryChange={changeFindQuery}
-                  caseSensitive={findCaseSensitive}
-                  onCaseSensitiveChange={setFindCaseSensitive}
-                  current={activeMatch}
-                  total={findTotal}
-                  onNext={() => stepMatch(1)}
-                  onPrev={() => stepMatch(-1)}
-                  onClose={() => setShowFindBar(false)}
+            activeContent.language === "image" ? (
+              <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-default-50/50 p-6">
+                <img
+                  src={activeContent.body}
+                  alt={activeContent.title}
+                  className="max-h-full max-w-full object-contain"
                 />
-              )}
-            </div>
+              </div>
+            ) : (
+              <div className="relative flex min-h-0 flex-1 flex-col">
+                {activeTab.view === "ets" && (
+                  <div className="flex shrink-0 items-start gap-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-xs leading-5 text-warning-700 dark:text-warning-300">
+                    <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>
+                      当前为 ArkTS 还原视图，结果仅供参考。该还原仍处于不稳定的测试阶段，
+                      可能存在与原始源码不一致的语法、结构或语义偏差，请以反汇编（.abc）视图为准核对。
+                    </span>
+                  </div>
+                )}
+                <CodeView
+                  content={activeContent.body}
+                  language={activeContent.language}
+                  findQuery={showFindBar ? findQuery : ""}
+                  findCaseSensitive={findCaseSensitive}
+                  activeMatchIndex={showFindBar && findTotal > 0 ? activeMatch : -1}
+                  onFindStats={setFindTotal}
+                  scrollToLine={
+                    scrollTarget && scrollTarget.nodeId === activeTab.tab.nodeId
+                      ? { line: scrollTarget.line, seq: scrollTarget.seq }
+                      : null
+                  }
+                />
+                {showFindBar && (
+                  <EditorFindBar
+                    query={findQuery}
+                    onQueryChange={changeFindQuery}
+                    caseSensitive={findCaseSensitive}
+                    onCaseSensitiveChange={setFindCaseSensitive}
+                    current={activeMatch}
+                    total={findTotal}
+                    onNext={() => stepMatch(1)}
+                    onPrev={() => stepMatch(-1)}
+                    onClose={() => setShowFindBar(false)}
+                  />
+                )}
+              </div>
+            )
           ) : (
             <EmptyState
               icon={<FileCode2 className="h-12 w-12 text-default-300" />}

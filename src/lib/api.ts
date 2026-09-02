@@ -34,7 +34,7 @@ export interface TreeNode {
 export interface NodeContent {
   /** 内容标题（完整类名 / `类.方法` / 单元名）。 */
   title: string
-  /** 内容语言标记（`asm` / `ts` / `text`），决定高亮方式。 */
+  /** 内容语言标记（`asm` / `ts` / `json` / `image` / `text`），决定渲染方式。 */
   language: string
   /** 正文文本。 */
   body: string
@@ -212,6 +212,18 @@ export const api = {
    */
   exportNodePa(nodeId: number, path: string): Promise<void> {
     return invoke<void>("export_node_pa", { nodeId, path })
+  },
+
+  /**
+   * 导出指定图片资源节点的原始字节到目标路径。
+   *
+   * 从压缩包中读取图片的原始字节（未经 base64 编码）直接写盘，保留原始格式与质量。
+   * 仅对图片类型（`.png` / `.jpg` / `.jpeg` / `.webp`）的资源节点有效。
+   * @param nodeId 项目树节点 ID
+   * @param path 导出文件的绝对路径
+   */
+  exportNodeImage(nodeId: number, path: string): Promise<void> {
+    return invoke<void>("export_node_image", { nodeId, path })
   },
 
   /**

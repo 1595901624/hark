@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use base64::Engine;
+
 use crate::decompiler::{self, LiteralNames};
 use crate::pa::{PaFile, PaMethod, PaRecord};
 use crate::runner;
@@ -390,11 +392,61 @@ impl Project {
                     .get(*entry)
                     .cloned()
                     .unwrap_or_default();
-                Ok(NodeContent {
-                    title: name,
-                    language: "text".into(),
-                    body: "(资源文件预览将在后续版本提供)".into(),
-                })
+                let lower = name.to_ascii_lowercase();
+                let is_json = lower.ends_with(".json") || lower.ends_with(".info");
+                let is_image = lower.ends_with(".png")
+                    || lower.ends_with(".jpg")
+                    || lower.ends_with(".jpeg")
+                    || lower.ends_with(".webp");
+                if is_json {
+                    match self.read_resource_entry(*entry) {
+                        Ok(text) => {
+                            let body = serde_json::from_str::<serde_json::Value>(&text)
+                                .ok()
+                                .map(|v| serde_json::to_string_pretty(&v).unwrap_or(text.clone()))
+                                .unwrap_or(text);
+                            Ok(NodeContent {
+                                title: name,
+                                language: "json".into(),
+                                body,
+                            })
+                        }
+                        Err(e) => Ok(NodeContent {
+                            title: name,
+                            language: "text".into(),
+                            body: format!("(读取资源文件失败: {e})"),
+                        }),
+                    }
+                } else if is_image {
+                    let mime = if lower.ends_with(".png") {
+                        "image/png"
+                    } else if lower.ends_with(".webp") {
+                        "image/webp"
+                    } else {
+                        "image/jpeg"
+                    };
+                    match self.read_resource_entry_bytes(*entry) {
+                        Ok(bytes) => {
+                            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                            Ok(NodeContent {
+                                title: name,
+                                language: "image".into(),
+                                body: format!("data:{mime};base64,{b64}"),
+                            })
+                        }
+                        Err(e) => Ok(NodeContent {
+                            title: name,
+                            language: "text".into(),
+                            body: format!("(读取图片失败: {e})"),
+                        }),
+                    }
+                } else {
+                    Ok(NodeContent {
+                        title: name,
+                        language: "text".into(),
+                        body: "(暂不支持预览此类型资源文件)".into(),
+                    })
+                }
             }
             None => Err(format!("未知节点 #{node_id}")),
         }
@@ -474,6 +526,40 @@ impl Project {
         })
     }
 
+    /// 从压缩包中按条目下标读取资源文件的字节内容。
+    ///
+    /// 以 [`Project::source_path`] 重新打开压缩包，按 [`Project::archive_entries`]
+    /// 中的路径名匹配条目并读取全部字节。打开/读取失败时返回中文错误信息。
+    fn read_resource_entry_bytes(&self, entry: usize) -> Result<Vec<u8>, String> {
+        let name = self
+            .archive_entries
+            .get(entry)
+            .ok_or("资源条目不存在")?;
+        let mut archive = open_zip(&self.source_path)?;
+        for i in 0..archive.len() {
+            let mut e = archive
+                .by_index(i)
+                .map_err(|err| format!("压缩包条目 #{i}: {err}"))?;
+            if e.name() != name {
+                continue;
+            }
+            let mut bytes = Vec::new();
+            e.read_to_end(&mut bytes)
+                .map_err(|err| format!("读取 `{name}`: {err}"))?;
+            return Ok(bytes);
+        }
+        Err(format!("压缩包中未找到条目 `{name}`"))
+    }
+
+    /// 从压缩包中按条目下标读取资源文件的文本内容。
+    ///
+    /// 基于 [`Project::read_resource_entry_bytes`] 读取字节后经
+    /// `String::from_utf8_lossy` 转为字符串。读取失败时返回中文错误信息。
+    fn read_resource_entry(&self, entry: usize) -> Result<String, String> {
+        let bytes = self.read_resource_entry_bytes(entry)?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
     /// 生成节点的 ArkTS 还原内容（不查缓存）。
     fn generate_ets(&self, node_id: u32) -> Result<NodeContent, String> {
         match self.nodes.get(&node_id) {
@@ -540,7 +626,75 @@ impl Project {
         fs::write(target, content.body).map_err(|e| format!("写入 {target:?} 失败: {e}"))
     }
 
-    /// 把项目包含的全部原始 `.abc` 字节码批量导出到目标目录。
+    /// 导出指定图片资源节点的原始字节到目标路径。
+    ///
+    /// 从压缩包中读取条目的原始字节（未经 base64 编码）直接写盘，
+    /// 保留原始格式与质量。仅对图片类型（`.png` / `.jpg` / `.jpeg` / `.webp`）
+    /// 的 `Resource` 节点有效。
+    ///
+    /// # Errors
+    /// 节点无效、非图片资源或写盘失败时返回中文错误信息。
+    pub fn export_image(&self, node_id: u32, target: &Path) -> Result<(), String> {
+        let payload = self
+            .nodes
+            .get(&node_id)
+            .ok_or(format!("未知节点 #{node_id}"))?;
+        let entry = match payload {
+            NodePayload::Resource { entry } => *entry,
+            _ => return Err("该节点不是资源文件，无法导出图片".into()),
+        };
+        let name = self
+            .archive_entries
+            .get(entry)
+            .cloned()
+            .unwrap_or_default();
+        let lower = name.to_ascii_lowercase();
+        let is_image = lower.ends_with(".png")
+            || lower.ends_with(".jpg")
+            || lower.ends_with(".jpeg")
+            || lower.ends_with(".webp");
+        if !is_image {
+            return Err("该资源文件不是支持的图片格式".into());
+        }
+        let bytes = self.read_resource_entry_bytes(entry)?;
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
+        }
+        fs::write(target, &bytes).map_err(|e| format!("写入 {target:?} 失败: {e}"))
+    }
+
+    /// 导出指定文本资源节点的原始内容到目标路径。
+    ///
+    /// 从压缩包中读取条目的原始字节并直接写盘。仅对文本类资源
+    /// （`.json` / `.info`）的 `Resource` 节点有效。
+    ///
+    /// # Errors
+    /// 节点无效、非文本资源或写盘失败时返回中文错误信息。
+    pub fn export_resource(&self, node_id: u32, target: &Path) -> Result<(), String> {
+        let payload = self
+            .nodes
+            .get(&node_id)
+            .ok_or(format!("未知节点 #{node_id}"))?;
+        let entry = match payload {
+            NodePayload::Resource { entry } => *entry,
+            _ => return Err("该节点不是资源文件，无法导出".into()),
+        };
+        let name = self
+            .archive_entries
+            .get(entry)
+            .cloned()
+            .unwrap_or_default();
+        let lower = name.to_ascii_lowercase();
+        let is_text = lower.ends_with(".json") || lower.ends_with(".info");
+        if !is_text {
+            return Err("该资源文件不是支持的文本格式".into());
+        }
+        let bytes = self.read_resource_entry_bytes(entry)?;
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
+        }
+        fs::write(target, &bytes).map_err(|e| format!("写入 {target:?} 失败: {e}"))
+    }
     ///
     /// 实际写入位置为 `<dir>/<项目名去扩展名>/`：
     /// - `.abc` 项目：直接把源文件复制为 `<dir>/<stem>/<文件名>`；

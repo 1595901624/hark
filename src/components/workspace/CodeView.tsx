@@ -86,6 +86,7 @@ export function CodeView({
   const lines = useMemo(() => content.split("\n"), [content])
   const isAsm = language === "asm"
   const isTs = language === "ts"
+  const isJson = language === "json"
 
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -147,7 +148,7 @@ export function CodeView({
    */
   const renderLine = (line: string, ranges: [number, number][], lineFlatBase: number) => {
     const highlight = (text: string) =>
-      isAsm ? highlightAsm(text) : isTs ? highlightTs(text) : text || " "
+      isAsm ? highlightAsm(text) : isTs ? highlightTs(text) : isJson ? highlightJson(text) : text || " "
     if (ranges.length === 0) return highlight(line)
     const nodes: ReactNode[] = []
     let cursor = 0
@@ -272,6 +273,88 @@ function highlightAsm(line: string) {
     } else if (token.startsWith(".")) {
       parts.push(
         <span key={key++} className="text-primary/80">
+          {token}
+        </span>,
+      )
+    } else {
+      parts.push(<span key={key++}>{token}</span>)
+    }
+    rest = rest.slice(token.length)
+  }
+
+  return parts
+}
+
+// ---------- JSON 高亮 ----------
+
+/** JSON 中的字面量关键字。 */
+const JSON_LITERALS = new Set(["true", "false", "null"])
+
+/**
+ * 对单行 JSON 文本做逐词高亮，返回 React 节点数组。
+ *
+ * 识别顺序：字符串字面量（区分键名 `"key":` 与字符串值）-> 词 token
+ * （布尔/null 字面量 / 数字）。
+ * @param line 单行文本
+ */
+function highlightJson(line: string) {
+  if (!line) return " "
+  const parts = []
+  let rest = line
+  let key = 0
+
+  while (rest.length > 0) {
+    // 空白原样保留
+    const wsMatch = rest.match(/^\s+/)
+    if (wsMatch) {
+      parts.push(<span key={key++}>{wsMatch[0]}</span>)
+      rest = rest.slice(wsMatch[0].length)
+      continue
+    }
+
+    // 字符串字面量（双引号，支持反斜杠转义）
+    if (rest[0] === '"') {
+      const end = findStringEnd(rest)
+      const str = rest.slice(0, end)
+      const after = rest.slice(end)
+      const afterTrimmed = after.match(/^\s*/)?.[0] ?? ""
+      const nextChar = after.slice(afterTrimmed.length)[0]
+      // 键名：字符串后紧跟冒号
+      if (nextChar === ":") {
+        parts.push(
+          <span key={key++} className="text-sky-600 dark:text-sky-400">
+            {str}
+          </span>,
+        )
+      } else {
+        parts.push(
+          <span key={key++} className="text-amber-600 dark:text-amber-400">
+            {str}
+          </span>,
+        )
+      }
+      rest = after
+      continue
+    }
+
+    // 词 token（布尔 / null / 数字）
+    const tokenMatch = rest.match(/^[^\s"',:{}[\]]+/)
+    if (!tokenMatch) {
+      parts.push(<span key={key++}>{rest[0]}</span>)
+      rest = rest.slice(1)
+      continue
+    }
+    const token = tokenMatch[0]
+
+    if (JSON_LITERALS.has(token)) {
+      parts.push(
+        <span key={key++} className="text-violet-600 dark:text-violet-400">
+          {token}
+        </span>,
+      )
+    } else if (/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(token)) {
+      parts.push(
+        <span key={key++} className="text-orange-600 dark:text-orange-400">
           {token}
         </span>,
       )
