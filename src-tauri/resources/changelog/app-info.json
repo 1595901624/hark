@@ -1,0 +1,21 @@
+{
+  "app": {
+    "name": "Hark",
+    "versionCode": 2,
+    "versionName": "0.2.0"
+  },
+  "module": {
+    "name": "hark",
+    "type": "entry",
+    "deviceTypes": ["phone", "tablet", "2in1"]
+  },
+  "abilities": [
+    {
+      "name": "MainWindow",
+      "type": "UI",
+      "skills": [
+        { "actions": ["action.view.disasm"] }
+      ]
+    }
+  ]
+}

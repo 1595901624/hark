@@ -1,0 +1,18 @@
+{
+  "name": "hark",
+  "version": "0.2.0",
+  "description": "Ark 字节码反编译工作台",
+  "features": [
+    "ark_disasm 反汇编",
+    "ArkTS 还原",
+    "AI 助手对话",
+    "全局多类别搜索",
+    "更新日志展示"
+  ],
+  "supportedFormats": [".abc", ".hap", ".har", ".app", ".hark"],
+  "changelogViewer": {
+    "supportsImages": true,
+    "supportsJson": true,
+    "supportsInfo": true
+  }
+}

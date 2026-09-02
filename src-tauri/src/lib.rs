@@ -13,6 +13,8 @@
 //!   `--version` 校验）；
 //! - [`disassembler_version`]：获取 `ark_disasm` 版本信息；
 //! - [`search_project`]：全局多类别搜索（类 / 方法 / 字段 / 字符串 / 代码 / 资源）。
+//! - [`read_changelog`]：读取随应用分发的更新日志 Markdown。
+//! - [`read_changelog_asset`]：读取更新日志引用的资源文件（图片/JSON/info）。
 
 pub mod decompiler;
 pub mod hark;
@@ -27,6 +29,7 @@ use std::sync::Mutex;
 
 use project::{MethodLocation, NodeContent, Project, TreeNode};
 use serde::Serialize;
+use base64::Engine;
 use tauri::{Manager, State};
 
 /// 应用共享状态：当前项目 + 反编译工具路径配置 + 搜索/打开取消代次。
@@ -437,6 +440,99 @@ async fn search_project(
     .map_err(|e| format!("搜索任务执行失败: {e}"))?
 }
 
+/// 读取随应用分发的更新日志（`resources/CHANGELOG.md`）。
+///
+/// 通过资源目录解析文件路径并读取全文返回；资源缺失或读取失败时返回中文错误。
+#[tauri::command]
+fn read_changelog(app: tauri::AppHandle) -> Result<String, String> {
+    let path = app
+        .path()
+        .resolve(
+            "resources/CHANGELOG.md",
+            tauri::path::BaseDirectory::Resource,
+        )
+        .map_err(|e| format!("无法定位更新日志资源: {e}"))?;
+    std::fs::read_to_string(&path)
+        .map_err(|e| format!("读取更新日志失败: {e}"))
+}
+
+/// [`read_changelog_asset`] 的返回值：图片以 data URL 返回，文本以原文返回。
+#[derive(Serialize)]
+struct ChangelogAsset {
+    /// 资源类型：`image` / `text`。
+    kind: String,
+    /// MIME 类型（如 `image/png`、`application/json`）。
+    mime: String,
+    /// 文本类资源的原始内容；图片类为空串。
+    text: String,
+    /// 图片类资源的 data URL（`data:<mime>;base64,...`）；文本类为空串。
+    data_url: String,
+}
+
+/// 读取更新日志引用的资源文件（`resources/changelog/<name>`）。
+///
+/// 图片（`.png` / `.jpg` / `.jpeg` / `.webp`）以 base64 data URL 返回，
+/// 其他文件（`.json` / `.info` 等）以 UTF-8 文本返回。
+/// 仅允许访问 `resources/changelog/` 子目录下的文件，路径含 `..` 时拒绝。
+#[tauri::command]
+fn read_changelog_asset(
+    app: tauri::AppHandle,
+    name: String,
+) -> Result<ChangelogAsset, String> {
+    // 防止路径穿越：仅允许文件名，不含分隔符或 ..
+    if name.is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+    {
+        return Err("非法的资源文件名".into());
+    }
+    let path = app
+        .path()
+        .resolve(
+            format!("resources/changelog/{name}"),
+            tauri::path::BaseDirectory::Resource,
+        )
+        .map_err(|e| format!("无法定位更新日志资源文件: {e}"))?;
+    let lower = name.to_lowercase();
+    let is_image = lower.ends_with(".png")
+        || lower.ends_with(".jpg")
+        || lower.ends_with(".jpeg")
+        || lower.ends_with(".webp");
+    if is_image {
+        let mime = if lower.ends_with(".png") {
+            "image/png"
+        } else if lower.ends_with(".webp") {
+            "image/webp"
+        } else {
+            "image/jpeg"
+        };
+        let bytes = std::fs::read(&path)
+            .map_err(|e| format!("读取资源文件失败: {e}"))?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        Ok(ChangelogAsset {
+            kind: "image".into(),
+            mime: mime.into(),
+            text: String::new(),
+            data_url: format!("data:{mime};base64,{b64}"),
+        })
+    } else {
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| format!("读取资源文件失败: {e}"))?;
+        let mime = if lower.ends_with(".json") {
+            "application/json"
+        } else {
+            "text/plain"
+        };
+        Ok(ChangelogAsset {
+            kind: "text".into(),
+            mime: mime.into(),
+            text,
+            data_url: String::new(),
+        })
+    }
+}
+
 /// Tauri 应用入口：注册插件、状态与命令后启动主窗口。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -467,7 +563,9 @@ pub fn run() {
             export_project_pa,
             set_disassembler_path,
             disassembler_version,
-            search_project
+            search_project,
+            read_changelog,
+            read_changelog_asset
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

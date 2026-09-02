@@ -22,6 +22,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog"
 import { getCurrentWebview } from "@tauri-apps/api/webview"
+import { getVersion } from "@tauri-apps/api/app"
+import { ChangelogView } from "./ChangelogView"
 import { Crosshair, Download, FileCode2, FolderOpen, FolderTree, LoaderCircle, Search, TriangleAlert } from "lucide-react"
 import { ChevronsDownUp, ChevronsUpDown } from "lucide-react"
 import { Button, addToast } from "../ui/base-ui"
@@ -84,6 +86,9 @@ interface TabEntry {
 
 /** 同一时刻允许打开的最大标签数，超出时淘汰最早的标签。 */
 const MAX_TABS = 12
+
+/** 更新日志特殊标签的固定 key（不对应项目树节点）。 */
+const CHANGELOG_TAB_KEY = "changelog"
 
 /** 支持双视图切换的节点类型；资源节点只有一种内容。 */
 const VIEWABLE_KINDS = new Set<TreeNode["kind"]>(["class", "method", "abc", "root", "package"])
@@ -232,6 +237,17 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
   const [aiPanelWidth, setAiPanelWidth] = usePersistentState<number>("ai-panel-width", 380)
   /** AI 面板拖宽状态 */
   const [isAIResizing, setIsAIResizing] = useState(false)
+  /** 更新日志标签是否打开 */
+  const [changelogOpen, setChangelogOpen] = useState(false)
+  /** 更新日志 Markdown 内容（加载完成后缓存） */
+  const [changelogContent, setChangelogContent] = useState<string | null>(null)
+  /** 更新日志是否正在加载 */
+  const [changelogLoading, setChangelogLoading] = useState(false)
+  /** 上次查看更新日志的应用版本号（持久化，用于判断新版本首次打开） */
+  const [lastViewedChangelogVersion, setLastViewedChangelogVersion] = usePersistentState<string>(
+    "last-viewed-changelog-version",
+    "",
+  )
 
   /** 全部展开项目树。 */
   const expandAll = () =>
@@ -246,10 +262,51 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
     setSearchFocusSeq(seq => seq + 1)
   }, [setSidebarView])
 
+  /** 打开更新日志标签页（内容未加载时自动拉取），并激活该标签。 */
+  const openChangelog = useCallback(() => {
+    setChangelogOpen(true)
+    setActiveKey(CHANGELOG_TAB_KEY)
+    if (changelogContent === null && !changelogLoading) {
+      setChangelogLoading(true)
+      void api.readChangelog().then(
+        content => {
+          setChangelogContent(content)
+          setChangelogLoading(false)
+        },
+        err => {
+          setChangelogContent(`读取更新日志失败：${String(err)}`)
+          setChangelogLoading(false)
+        },
+      )
+    }
+  }, [changelogContent, changelogLoading])
+
+  /** 关闭更新日志标签页，激活回退到最近的项目标签。 */
+  const closeChangelog = useCallback(() => {
+    setChangelogOpen(false)
+    if (activeKeyRef.current === CHANGELOG_TAB_KEY) {
+      const fallback = tabsRef.current[tabsRef.current.length - 1]
+      setActiveKey(fallback?.tab.key)
+    }
+  }, [])
+
   // 确保默认打开模式与方法打开方式已加载到缓存，供 openNode 同步读取
   useEffect(() => {
     void getStoredItem("default-open-view")
     void getStoredItem("open-method-in-new-tab")
+  }, [])
+
+  // 新版本首次打开时自动展示更新日志（仅 Tauri 环境）
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return
+    void getVersion().then(version => {
+      if (version && version !== lastViewedChangelogVersion) {
+        setLastViewedChangelogVersion(version)
+        openChangelog()
+      }
+    })
+    // 仅在挂载时执行一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // ---------- 内容加载 ----------
@@ -526,12 +583,15 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
     const onExportProjectAbc = () => void exportProjectAbc()
     /** 标题栏「文件 → 导出 → 反汇编 (.pa)…」 */
     const onExportProjectPa = () => void exportProjectPa()
+    /** 标题栏「帮助 → 更新日志」 */
+    const onOpenChangelog = () => openChangelog()
     window.addEventListener("hark:open-file", onOpenFile)
     window.addEventListener("hark:close-project", onCloseProject)
     window.addEventListener("hark:save-project", onSaveProject)
     window.addEventListener("hark:save-project-as", onSaveProjectAs)
     window.addEventListener("hark:export-project-abc", onExportProjectAbc)
     window.addEventListener("hark:export-project-pa", onExportProjectPa)
+    window.addEventListener("hark:open-changelog", onOpenChangelog)
     return () => {
       window.removeEventListener("hark:open-file", onOpenFile)
       window.removeEventListener("hark:close-project", onCloseProject)
@@ -539,8 +599,9 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
       window.removeEventListener("hark:save-project-as", onSaveProjectAs)
       window.removeEventListener("hark:export-project-abc", onExportProjectAbc)
       window.removeEventListener("hark:export-project-pa", onExportProjectPa)
+      window.removeEventListener("hark:open-changelog", onOpenChangelog)
     }
-  }, [pickAndOpen, saveProject, saveProjectAs, exportProjectAbc, exportProjectPa])
+  }, [pickAndOpen, saveProject, saveProjectAs, exportProjectAbc, exportProjectPa, openChangelog])
 
   // Ctrl+O 打开 / Ctrl+S 保存 / Ctrl+Shift+S 另存为
   // Ctrl+Shift+F 全局搜索 / Ctrl+F 编辑器内查找
@@ -561,7 +622,7 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
           e.preventDefault()
           if (e.shiftKey) {
             openGlobalSearch()
-          } else if (tabsRef.current.length > 0) {
+          } else if (tabsRef.current.length > 0 && activeKeyRef.current !== CHANGELOG_TAB_KEY) {
             setShowFindBar(true)
           }
           break
@@ -801,6 +862,10 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
    * @param key 要关闭的标签 key
    */
   const closeTab = (key: string) => {
+    if (key === CHANGELOG_TAB_KEY) {
+      closeChangelog()
+      return
+    }
     setTabs(prev => {
       const idx = prev.findIndex(entry => entry.tab.key === key)
       const next = prev.filter(entry => entry.tab.key !== key)
@@ -814,13 +879,20 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
 
   /** 关闭除指定标签外的所有标签。 */
   const closeOtherTabs = (key: string) => {
+    if (key === CHANGELOG_TAB_KEY) {
+      setTabs([])
+      setActiveKey(CHANGELOG_TAB_KEY)
+      return
+    }
     setTabs(prev => prev.filter(entry => entry.tab.key === key))
+    setChangelogOpen(false)
     setActiveKey(key)
   }
 
   /** 关闭所有标签。 */
   const closeAllTabs = () => {
     setTabs([])
+    setChangelogOpen(false)
     setActiveKey(undefined)
   }
 
@@ -1038,9 +1110,14 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
 
         {/* 右侧代码区 */}
         <main className="flex min-w-0 flex-1 flex-col rounded-tl-lg border-l border-t border-default-200/60 bg-background">
-          {tabs.length > 0 ? (
+          {tabs.length > 0 || changelogOpen ? (
             <EditorTabs
-              tabs={tabs.map(entry => entry.tab)}
+              tabs={[
+                ...(changelogOpen
+                  ? [{ key: CHANGELOG_TAB_KEY, title: "更新日志", nodeId: -1 }]
+                  : []),
+                ...tabs.map(entry => entry.tab),
+              ]}
               activeKey={activeKey}
               onSelect={setActiveKey}
               onClose={closeTab}
@@ -1124,7 +1201,16 @@ export function Workspace({ isSidebarCollapsed, isAIPanelOpen, onOpenAISettings 
             </div>
           )}
 
-          {busyMessage ? (
+          {activeKey === CHANGELOG_TAB_KEY ? (
+            changelogLoading ? (
+              <EmptyState
+                icon={<LoaderCircle className="h-8 w-8 animate-spin text-primary/70" />}
+                text="正在加载更新日志…"
+              />
+            ) : (
+              <ChangelogView content={changelogContent ?? ""} />
+            )
+          ) : busyMessage ? (
             <EmptyState
               icon={<LoaderCircle className="h-10 w-10 animate-spin text-primary/70" />}
               text={busyMessage}

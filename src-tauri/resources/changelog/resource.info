@@ -1,0 +1,9 @@
+{
+  "resource": "changelog-assets",
+  "version": "0.2.0",
+  "items": [
+    { "name": "feature-ai-assistant.png", "type": "image/png", "description": "AI 助手功能截图" },
+    { "name": "module-info.json", "type": "application/json", "description": "模块配置信息" },
+    { "name": "app-info.json", "type": "application/json", "description": "应用配置信息" }
+  ]
+}

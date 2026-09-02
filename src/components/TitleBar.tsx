@@ -183,6 +183,7 @@ export default function TitleBar({ onNavigate, onToggleSidebar, onToggleAIPanel,
             <DesktopTitleMenu menuKey="help" label="帮助" activeMenu={activeTitleMenu} onActiveMenuChange={setActiveTitleMenu} onPointerDown={rememberEditableElement}>
               {desktopMenuItem("source-code", "源代码", undefined, () => void openUrl("https://github.com/1595901624/hark"))}
               <DropdownSeparator />
+              {desktopMenuItem("changelog", "更新日志", undefined, () => window.dispatchEvent(new Event("hark:open-changelog")))}
               {desktopMenuItem("about", `关于 ${aboutInfo.name}`, undefined, () => setIsAboutOpen(true))}
             </DesktopTitleMenu>
           </div>

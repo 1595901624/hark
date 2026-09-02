@@ -145,6 +145,18 @@ export interface OpenProjectResult {
   session: HarkSession | null
 }
 
+/** 更新日志引用的资源文件内容（图片以 data URL 返回，文本以原文返回）。 */
+export interface ChangelogAsset {
+  /** 资源类型：`image` / `text`。 */
+  kind: string
+  /** MIME 类型（如 `image/png`、`application/json`）。 */
+  mime: string
+  /** 文本类资源的原始内容；图片类为空串。 */
+  text: string
+  /** 图片类资源的 data URL（`data:<mime>;base64,...`）；文本类为空串。 */
+  data_url: string
+}
+
 /** 后端命令的统一调用入口。 */
 export const api = {
   /**
@@ -288,5 +300,22 @@ export const api = {
    */
   searchProject(options: SearchOptions): Promise<SearchResponse> {
     return invoke<SearchResponse>("search_project", { options })
+  },
+
+  /**
+   * 读取随应用分发的更新日志（`resources/CHANGELOG.md`）全文。
+   * @returns 更新日志的 Markdown 文本
+   */
+  readChangelog(): Promise<string> {
+    return invoke<string>("read_changelog")
+  },
+
+  /**
+   * 读取更新日志引用的资源文件（`resources/changelog/<name>`）。
+   * 图片以 data URL 返回，文本类（.json / .info 等）以原文返回。
+   * @param name 资源文件名（仅文件名，不含路径）
+   */
+  readChangelogAsset(name: string): Promise<ChangelogAsset> {
+    return invoke<ChangelogAsset>("read_changelog_asset", { name })
   },
 }
